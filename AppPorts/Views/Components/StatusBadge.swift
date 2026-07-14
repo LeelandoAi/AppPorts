@@ -27,8 +27,26 @@ import SwiftUI
 /// - 半透明背景和边框提升层次感
 ///
 /// - Note: 自动支持无障碍功能（Accessibility）
+private enum BadgeID: Hashable {
+    case migrationLock
+    case linked
+    case partialLinked
+    case orphanedLink
+    case unlinked
+    case external
+    case pendingMoveOut
+    case sparkle
+    case electron
+    case running
+    case system
+    case nonNative
+    case appStore
+    case local
+    case resigned
+}
+
 private struct BadgeConfig: Identifiable {
-    let id = UUID()
+    let id: BadgeID
     let text: String
     let icon: String
     let color: Color
@@ -69,8 +87,9 @@ struct StatusBadge: View {
         // 1. 链接状态标签
         if app.status == AppStatus.linked {
             if app.needsLock {
-                let locked = Self.isExternalAppLocked(app: app)
+                let locked = app.isExternalAppLocked
                 result.append(BadgeConfig(
+                    id: .migrationLock,
                     text: locked ? "锁定迁移" : "非锁定迁移",
                     icon: locked ? "lock.fill" : "lock.open",
                     color: locked ? .green : .orange,
@@ -78,129 +97,54 @@ struct StatusBadge: View {
                 ))
             } else if app.hasSelfUpdater {
                 // 原生自更新 app（Chrome、Edge 等）不加锁，显示"已链接"
-                result.append(BadgeConfig(text: AppStatus.linked, icon: "link", color: .green, isTappable: false))
+                result.append(BadgeConfig(id: .linked, text: AppStatus.linked, icon: "link", color: .green, isTappable: false))
             } else {
-                result.append(BadgeConfig(text: AppStatus.linked, icon: "link", color: .green, isTappable: false))
+                result.append(BadgeConfig(id: .linked, text: AppStatus.linked, icon: "link", color: .green, isTappable: false))
             }
         } else if app.status == AppStatus.partialLinked {
-            result.append(BadgeConfig(text: AppStatus.partialLinked, icon: "link.badge.plus", color: .yellow, isTappable: false))
+            result.append(BadgeConfig(id: .partialLinked, text: AppStatus.partialLinked, icon: "link.badge.plus", color: .yellow, isTappable: false))
         } else if app.status == AppStatus.orphanedLink {
-            result.append(BadgeConfig(text: AppStatus.orphanedLink, icon: "link.badge.exclamationmark", color: .red, isTappable: false))
+            result.append(BadgeConfig(id: .orphanedLink, text: AppStatus.orphanedLink, icon: "link.badge.exclamationmark", color: .red, isTappable: false))
         } else if app.status == AppStatus.unlinked {
-            result.append(BadgeConfig(text: AppStatus.unlinked, icon: "externaldrive.badge.xmark", color: .orange, isTappable: false))
+            result.append(BadgeConfig(id: .unlinked, text: AppStatus.unlinked, icon: "externaldrive.badge.xmark", color: .orange, isTappable: false))
         } else if app.status == AppStatus.external {
-            result.append(BadgeConfig(text: AppStatus.external, icon: "externaldrive", color: .orange, isTappable: false))
+            result.append(BadgeConfig(id: .external, text: AppStatus.external, icon: "externaldrive", color: .orange, isTappable: false))
         } else if app.status == AppStatus.pendingMoveOut {
-            result.append(BadgeConfig(text: AppStatus.pendingMoveOut, icon: "arrow.up.right.circle", color: .cyan, isTappable: false))
+            result.append(BadgeConfig(id: .pendingMoveOut, text: AppStatus.pendingMoveOut, icon: "arrow.up.right.circle", color: .cyan, isTappable: false))
         }
 
         // 2. 框架标签（独立于链接状态）
         if app.isSparkleApp {
-            result.append(BadgeConfig(text: "Sparkle", icon: "arrow.triangle.2.circlepath", color: .teal, isTappable: true))
+            result.append(BadgeConfig(id: .sparkle, text: "Sparkle", icon: "arrow.triangle.2.circlepath", color: .teal, isTappable: true))
         }
         if app.isElectronApp {
-            result.append(BadgeConfig(text: "Electron", icon: "atom", color: .indigo, isTappable: true))
+            result.append(BadgeConfig(id: .electron, text: "Electron", icon: "atom", color: .indigo, isTappable: true))
         }
 
         // 3. 类型标签
         if app.isRunning {
-            result.append(BadgeConfig(text: "运行中", icon: "play.fill", color: .purple, isTappable: false))
+            result.append(BadgeConfig(id: .running, text: "运行中", icon: "play.fill", color: .purple, isTappable: false))
         } else if app.isSystemApp {
-            result.append(BadgeConfig(text: "系统", icon: "lock.fill", color: .gray, isTappable: false))
+            result.append(BadgeConfig(id: .system, text: "系统", icon: "lock.fill", color: .gray, isTappable: false))
         } else if app.isIOSApp {
-            result.append(BadgeConfig(text: "非原生", icon: "iphone", color: .pink, isTappable: false))
+            result.append(BadgeConfig(id: .nonNative, text: "非原生", icon: "iphone", color: .pink, isTappable: false))
         } else if app.isAppStoreApp {
-            result.append(BadgeConfig(text: "商店", icon: "applelogo", color: .blue, isTappable: AppMigrationService.isMASExternalInstallSupported))
+            result.append(BadgeConfig(id: .appStore, text: "商店", icon: "applelogo", color: .blue, isTappable: AppMigrationService.isMASExternalInstallSupported))
         }
 
         // 5. MAS 外部安装标签（复用商店标签，附加外部安装说明）
         if app.isMASExternal && !app.isAppStoreApp {
-            result.append(BadgeConfig(text: "商店", icon: "applelogo", color: .blue, isTappable: true))
+            result.append(BadgeConfig(id: .appStore, text: "商店", icon: "applelogo", color: .blue, isTappable: true))
         }
 
         // 4. 如果没有任何标签，显示"本地"
         if result.isEmpty {
-            result.append(BadgeConfig(text: AppStatus.local, icon: "macmini", color: .secondary, isTappable: false))
+            result.append(BadgeConfig(id: .local, text: AppStatus.local, icon: "macmini", color: .secondary, isTappable: false))
         }
 
         return result
     }
     
-    /// 检查外部 app 是否被 uchg 锁定
-    private static func isExternalAppLocked(app: AppItem) -> Bool {
-        let externalPath: String
-
-        // 外部 app：直接检查自身
-        if app.path.path.hasPrefix("/Volumes/") {
-            externalPath = app.path.path
-        }
-        // wholeAppSymlink：整个 .app 是符号链接，解析目标
-        else if let resolved = resolveExternalPath(from: app.path) {
-            externalPath = resolved
-        }
-        // stub portal：从 launcher 脚本提取外部路径
-        else if let resolved = resolveExternalPathFromLauncher(app: app) {
-            externalPath = resolved
-        }
-        // deepContentsWrapper：解析 Contents/ 符号链接目标
-        else if let resolved = resolveExternalPathFromContents(app: app) {
-            externalPath = resolved
-        }
-        else {
-            return false
-        }
-
-        // 检查 uchg 标志
-        var statBuf = stat()
-        guard stat(externalPath, &statBuf) == 0 else { return false }
-        return (statBuf.st_flags & UInt32(UF_IMMUTABLE)) != 0
-    }
-
-    /// wholeAppSymlink：解析符号链接目标
-    private static func resolveExternalPath(from url: URL) -> String? {
-        guard let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]),
-              values.isSymbolicLink == true,
-              let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else {
-            return nil
-        }
-        let resolved = URL(fileURLWithPath: dest, relativeTo: url.deletingLastPathComponent()).standardizedFileURL
-        return resolved.path.hasPrefix("/Volumes/") ? resolved.path : nil
-    }
-
-    /// stub portal：从原生 launcher 的 real_app_path.txt 或旧版 bash 脚本提取外部路径
-    private static func resolveExternalPathFromLauncher(app: AppItem) -> String? {
-        // 新版原生 launcher：从 real_app_path.txt 读取
-        let pathFile = app.path.appendingPathComponent("Contents/Resources/real_app_path.txt")
-        if let raw = try? String(contentsOf: pathFile, encoding: .utf8),
-           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            return path.hasPrefix("/Volumes/") ? path : nil
-        }
-
-        // 旧版 bash launcher：从脚本中提取 REAL_APP='...'
-        let launcher = app.path.appendingPathComponent("Contents/MacOS/launcher")
-        guard let script = try? String(contentsOf: launcher, encoding: .utf8),
-              let range = script.range(of: "REAL_APP='") else { return nil }
-        let afterQuote = script[range.upperBound...]
-        guard let endQuote = afterQuote.range(of: "'") else { return nil }
-        let path = String(afterQuote[..<endQuote.lowerBound])
-        return path.hasPrefix("/Volumes/") ? path : nil
-    }
-
-    /// deepContentsWrapper：解析 Contents/ 符号链接目标
-    private static func resolveExternalPathFromContents(app: AppItem) -> String? {
-        let contents = app.path.appendingPathComponent("Contents")
-        guard let values = try? contents.resourceValues(forKeys: [.isSymbolicLinkKey]),
-              values.isSymbolicLink == true,
-              let dest = try? FileManager.default.destinationOfSymbolicLink(atPath: contents.path) else {
-            return nil
-        }
-        let resolved = URL(fileURLWithPath: dest, relativeTo: contents.deletingLastPathComponent()).standardizedFileURL
-        // Contents/ 指向外部 app 的 Contents/，需要上跳一级
-        let externalApp = resolved.deletingLastPathComponent()
-        return externalApp.path.hasPrefix("/Volumes/") ? externalApp.path : nil
-    }
-
     /// 点击标签时显示的说明文字
     private func badgeInfoMessage(for badge: BadgeConfig) -> String? {
         switch badge.text {
@@ -235,6 +179,7 @@ struct StatusBadge: View {
         .overlay(
             Capsule().stroke(badge.color.opacity(0.2), lineWidth: 0.5)
         )
+        .accessibilityElement(children: .combine)
     }
 
     var body: some View {
@@ -248,15 +193,10 @@ struct StatusBadge: View {
             }
 
             if app.isResigned {
-                badgeView(for: BadgeConfig(text: "已重签名", icon: "seal.fill", color: .teal, isTappable: false))
+                badgeView(for: BadgeConfig(id: .resigned, text: "已重签名", icon: "seal.fill", color: .teal, isTappable: false))
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            (app.isResigned ? "已重签名".localized + ", " : "") +
-            badges.map { localizedStatusBadgeText($0.text) }.joined(separator: ", ")
-        )
-        .accessibilityAddTraits(.isStaticText)
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -267,21 +207,28 @@ private struct TappableBadge: View {
     @State private var isPresented = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: badge.icon)
-                .font(.system(size: 9, weight: .bold))
-            Text(localizedStatusBadgeText(badge.text))
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+        Button {
+            isPresented = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: badge.icon)
+                    .font(.system(size: 9, weight: .bold))
+                Text(localizedStatusBadgeText(badge.text))
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .foregroundColor(badge.color)
+            .background(badge.color.opacity(0.1))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(badge.color.opacity(0.2), lineWidth: 0.5)
+            )
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .foregroundColor(badge.color)
-        .background(badge.color.opacity(0.1))
-        .clipShape(Capsule())
-        .overlay(
-            Capsule().stroke(badge.color.opacity(0.2), lineWidth: 0.5)
-        )
-        .onTapGesture { isPresented = true }
+        .buttonStyle(.plain)
+        .accessibilityLabel(localizedStatusBadgeText(badge.text))
+        .accessibilityHint(message)
+        .help(message)
         .popover(isPresented: $isPresented) {
             Text(message)
                 .font(.system(size: 12))

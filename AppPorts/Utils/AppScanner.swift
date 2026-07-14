@@ -5,6 +5,7 @@
 //  Created by shimoko.com on 2026/2/6.
 //
 
+import Darwin
 import Foundation
 
 // MARK: - 应用扫描器
@@ -206,14 +207,28 @@ actor AppScanner {
                 )
                 let isSystem = itemURL.path.hasPrefix("/System")
                 let isRunning = runningAppURLs.contains(itemURL)
+                let externalMetadataURL = status == AppStatus.linked
+                    ? externalTargetForLocalApp(at: itemURL)
+                    : nil
+                let metadataURL = externalMetadataURL ?? itemURL
+                // 本地入口版本必须保留，用于与外部真实应用比较并触发 Stub 刷新。
                 let version = readBundleVersion(from: itemURL)
                 
                 // 检测是否为 App Store 应用和 iOS 应用
-                let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: itemURL)
-                let isResigned = checkResignedStatus(bundleURL: itemURL)
-                let (isElectron, isSparkle) = detectElectronAndSparkle(at: itemURL)
-                let hasUpdater = isSparkle || (isElectron && hasElectronUpdater(at: itemURL)) || hasCustomUpdater(at: itemURL)
-                let needsLock = isSparkle || (isElectron && hasElectronUpdater(at: itemURL))
+                // 链接入口（尤其 Stub Portal）不会保留完整框架和更新器元数据，
+                // 因此链接状态下必须从外部真实应用读取展示字段。
+                let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: metadataURL)
+                let isResigned = checkResignedStatus(bundleURL: metadataURL)
+                let (isElectron, isSparkle) = detectElectronAndSparkle(at: metadataURL)
+                let usesElectronUpdater = isElectron && hasElectronUpdater(at: metadataURL)
+                let hasUpdater = isSparkle || usesElectronUpdater || hasCustomUpdater(at: metadataURL)
+                let needsLock = isSparkle || usesElectronUpdater
+                let isExternalAppLocked: Bool
+                if needsLock, let externalURL = externalMetadataURL {
+                    isExternalAppLocked = isImmutable(at: externalURL)
+                } else {
+                    isExternalAppLocked = false
+                }
                 let app = AppItem(
                     name: appName,
                     path: itemURL,
@@ -228,6 +243,7 @@ actor AppScanner {
                     isSparkleApp: isSparkle,
                     hasSelfUpdater: hasUpdater,
                     needsLock: needsLock,
+                    isExternalAppLocked: isExternalAppLocked,
                     version: version,
                     containerKind: .standaloneApp
                 )
@@ -914,6 +930,7 @@ actor AppScanner {
                 let (isElectron, isSparkle) = detectElectronAndSparkle(at: itemURL)
                 let hasUpdater = isSparkle || (isElectron && hasElectronUpdater(at: itemURL)) || hasCustomUpdater(at: itemURL)
                 let needsLock = isSparkle || (isElectron && hasElectronUpdater(at: itemURL))
+                let isExternalAppLocked = status == AppStatus.linked && needsLock && isImmutable(at: itemURL)
                 let app = AppItem(
                     name: appName,
                     path: itemURL,
@@ -926,6 +943,7 @@ actor AppScanner {
                     isSparkleApp: isSparkle,
                     hasSelfUpdater: hasUpdater,
                     needsLock: needsLock,
+                    isExternalAppLocked: isExternalAppLocked,
                     containerKind: .standaloneApp
                 )
                 candidates.append(makeCandidate(for: app, bundleURL: itemURL, priority: 10))
@@ -954,6 +972,10 @@ actor AppScanner {
 
                         let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: bundleURL)
                         let isResigned = checkResignedStatus(bundleURL: bundleURL)
+                        let (isElectron, isSparkle) = detectElectronAndSparkle(at: bundleURL)
+                        let hasUpdater = isSparkle || (isElectron && hasElectronUpdater(at: bundleURL)) || hasCustomUpdater(at: bundleURL)
+                        let needsLock = isSparkle || (isElectron && hasElectronUpdater(at: bundleURL))
+                        let isExternalAppLocked = status == AppStatus.linked && needsLock && isImmutable(at: itemURL)
                         let app = AppItem(
                             name: folderName,
                             path: itemURL,
@@ -964,6 +986,11 @@ actor AppScanner {
                             isAppStoreApp: isAppStore,
                             isIOSApp: isIOS,
                             isResigned: isResigned,
+                            isElectronApp: isElectron,
+                            isSparkleApp: isSparkle,
+                            hasSelfUpdater: hasUpdater,
+                            needsLock: needsLock,
+                            isExternalAppLocked: isExternalAppLocked,
                             containerKind: .singleAppContainer,
                             appCount: 1
                         )
@@ -1014,6 +1041,9 @@ actor AppScanner {
 
                 let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: externalTargetURL)
                 let isResigned = checkResignedStatus(bundleURL: externalTargetURL)
+                let (isElectron, isSparkle) = detectElectronAndSparkle(at: externalTargetURL)
+                let hasUpdater = isSparkle || (isElectron && hasElectronUpdater(at: externalTargetURL)) || hasCustomUpdater(at: externalTargetURL)
+                let needsLock = isSparkle || (isElectron && hasElectronUpdater(at: externalTargetURL))
                 let app = AppItem(
                     name: externalTargetURL.lastPathComponent,
                     path: externalTargetURL,
@@ -1024,6 +1054,11 @@ actor AppScanner {
                     isAppStoreApp: isAppStore,
                     isIOSApp: isIOS,
                     isResigned: isResigned,
+                    isElectronApp: isElectron,
+                    isSparkleApp: isSparkle,
+                    hasSelfUpdater: hasUpdater,
+                    needsLock: needsLock,
+                    isExternalAppLocked: needsLock && isImmutable(at: externalTargetURL),
                     containerKind: .standaloneApp
                 )
                 candidates.append(makeCandidate(for: app, bundleURL: externalTargetURL, priority: 40))
@@ -1043,6 +1078,9 @@ actor AppScanner {
             if appsInFolder.count == 1, let bundleURL = appsInFolder.first {
                 let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: bundleURL)
                 let isResigned = checkResignedStatus(bundleURL: bundleURL)
+                let (isElectron, isSparkle) = detectElectronAndSparkle(at: bundleURL)
+                let hasUpdater = isSparkle || (isElectron && hasElectronUpdater(at: bundleURL)) || hasCustomUpdater(at: bundleURL)
+                let needsLock = isSparkle || (isElectron && hasElectronUpdater(at: bundleURL))
                 let app = AppItem(
                     name: externalTargetURL.lastPathComponent,
                     path: externalTargetURL,
@@ -1053,6 +1091,11 @@ actor AppScanner {
                     isAppStoreApp: isAppStore,
                     isIOSApp: isIOS,
                     isResigned: isResigned,
+                    isElectronApp: isElectron,
+                    isSparkleApp: isSparkle,
+                    hasSelfUpdater: hasUpdater,
+                    needsLock: needsLock,
+                    isExternalAppLocked: needsLock && isImmutable(at: externalTargetURL),
                     containerKind: .singleAppContainer,
                     appCount: 1
                 )
@@ -1136,6 +1179,14 @@ actor AppScanner {
             // 同状态按名称排序
             return app1.displayName < app2.displayName
         }
+    }
+
+    /// 检查应用根目录是否带有 uchg immutable 标志。
+    /// 此方法只在 AppScanner actor 的后台扫描路径中调用，避免阻塞 SwiftUI 行渲染。
+    private func isImmutable(at url: URL) -> Bool {
+        var statBuffer = stat()
+        guard stat(url.path, &statBuffer) == 0 else { return false }
+        return (statBuffer.st_flags & UInt32(UF_IMMUTABLE)) != 0
     }
 
     private func makeCandidate(for app: AppItem, bundleURL: URL, priority: Int) -> ScanCandidate {

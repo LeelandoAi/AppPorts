@@ -23,6 +23,57 @@ struct CustomDirRowView: View {
 
     var body: some View {
         HStack(spacing: 14) {
+            rowSummary
+
+            if showsDeleteLinkButton {
+                Button(role: .destructive, action: { onDeleteLink(entry) }) {
+                    Image(systemName: "link.badge.minus")
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+                .padding(6)
+                .background(Color.red.opacity(0.1))
+                .clipShape(Circle())
+                .help("断开此链接并保留外部文件夹".localized)
+                .accessibilityLabel("断开链接".localized)
+                .accessibilityHint("断开此链接并保留外部文件夹".localized)
+            }
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? Color.accentColor.opacity(0.1) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isHovered = hovering
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .contextMenu {
+            Button("在 Finder 中显示".localized) {
+                NSWorkspace.shared.activateFileViewerSelecting([entry.url])
+            }
+
+            if showsDeleteLinkButton {
+                Divider()
+                Button("断开链接".localized) {
+                    onDeleteLink(entry)
+                }
+            }
+
+            Divider()
+
+            Button("移除记录".localized) {
+                onRemove(entry.config)
+            }
+        }
+    }
+
+    private var rowSummary: some View {
+        HStack(spacing: 14) {
             Image(systemName: entry.kind == .local ? "folder.fill" : "externaldrive.fill")
                 .font(.system(size: 24))
                 .symbolRenderingMode(.hierarchical)
@@ -58,51 +109,10 @@ struct CustomDirRowView: View {
             }
 
             Spacer()
-
-            if showsDeleteLinkButton {
-                Button(action: { onDeleteLink(entry) }) {
-                    Image(systemName: "link.badge.plus")
-                        .foregroundColor(.red)
-                }
-                .buttonStyle(.plain)
-                .padding(6)
-                .background(Color.red.opacity(0.1))
-                .clipShape(Circle())
-                .help("断开此链接并保留外部文件夹".localized)
-            }
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.1) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
-        )
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isHovered = hovering
-            }
-        }
-        .accessibilityElement(children: .ignore)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(entry.name) + Text(", ") + Text(CustomDirStatus.localized(entry.status)))
-        .contextMenu {
-            Button("在 Finder 中显示".localized) {
-                NSWorkspace.shared.activateFileViewerSelecting([entry.url])
-            }
-
-            if showsDeleteLinkButton {
-                Divider()
-                Button("断开链接".localized) {
-                    onDeleteLink(entry)
-                }
-            }
-
-            Divider()
-
-            Button("移除记录".localized) {
-                onRemove(entry.config)
-            }
-        }
     }
 }
 

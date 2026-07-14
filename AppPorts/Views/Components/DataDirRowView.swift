@@ -12,6 +12,7 @@ struct DataDirRowView: View {
     let item: DataDirItem
     let isSelected: Bool
     var level: Int = 0
+    var onSelect: ((String) -> Void)? = nil
     let onMigrate: (DataDirItem) -> Void
     let onRestore: (DataDirItem) -> Void
     let onManageExistingLink: (DataDirItem) -> Void
@@ -21,6 +22,49 @@ struct DataDirRowView: View {
     @State private var isHovered = false
 
     var body: some View {
+        HStack(spacing: 12) {
+            if let onSelect {
+                Button {
+                    onSelect(item.id)
+                } label: {
+                    rowSummary
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            } else {
+                rowSummary
+            }
+
+            // 操作按钮
+            operationButtons
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected
+                      ? Color.accentColor.opacity(0.15)
+                      : (isHovered ? Color(nsColor: .controlBackgroundColor) : .clear))
+                .shadow(color: isHovered && !isSelected ? Color.black.opacity(0.04) : .clear, radius: 4, y: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.3) : (isHovered ? Color.primary.opacity(0.05) : .clear), lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.2)) { isHovered = hovering }
+        }
+        .accessibilityElement(children: .contain)
+        .contextMenu {
+            Button("在 Finder 中显示".localized) {
+                NSWorkspace.shared.activateFileViewerSelecting([item.linkedDestination ?? item.path])
+            }
+        }
+    }
+
+    private var rowSummary: some View {
         HStack(spacing: 12) {
             // 树形缩进指示
             if level > 0 {
@@ -89,33 +133,10 @@ struct DataDirRowView: View {
                 // 状态徽章
                 DataDirStatusBadge(status: item.status)
             }
-
-            // 操作按钮
-            operationButtons
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected
-                      ? Color.accentColor.opacity(0.15)
-                      : (isHovered ? Color(nsColor: .controlBackgroundColor) : .clear))
-                .shadow(color: isHovered && !isSelected ? Color.black.opacity(0.04) : .clear, radius: 4, y: 2)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isSelected ? Color.accentColor.opacity(0.3) : (isHovered ? Color.primary.opacity(0.05) : .clear), lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.2)) { isHovered = hovering }
-        }
         .accessibilityElement(children: .combine)
-        .contextMenu {
-            Button("在 Finder 中显示".localized) {
-                NSWorkspace.shared.activateFileViewerSelecting([item.linkedDestination ?? item.path])
-            }
-        }
     }
 
     // MARK: - 子视图
@@ -145,6 +166,8 @@ struct DataDirRowView: View {
                 .font(.system(size: 13))
                 .foregroundColor(.secondary.opacity(0.5))
                 .help((item.nonMigratableReason ?? "此目录不支持迁移").localized)
+                .accessibilityLabel("此目录不支持迁移".localized)
+                .accessibilityHint((item.nonMigratableReason ?? "此目录不支持迁移").localized)
         } else if item.status == "待规范" {
             if item.linkedDestination != nil {
                 Button(action: { onNormalizeManagedLink(item) }) {

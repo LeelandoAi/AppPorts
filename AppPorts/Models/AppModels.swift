@@ -131,6 +131,10 @@ struct AppItem: Identifiable, Equatable, Sendable {
     /// 是否需要 uchg 锁定（仅 Sparkle/Electron 有更新器的应用）
     var needsLock: Bool = false
 
+    /// 已链接的外部应用是否带有 uchg immutable 标志
+    /// - Note: 在应用扫描阶段预计算，避免列表行渲染时执行同步文件系统读取
+    var isExternalAppLocked: Bool = false
+
     /// 应用版本号（CFBundleShortVersionString）
     var version: String? = nil
 
@@ -200,6 +204,7 @@ struct AppItem: Identifiable, Equatable, Sendable {
         lhs.isSparkleApp == rhs.isSparkleApp &&
         lhs.hasSelfUpdater == rhs.hasSelfUpdater &&
         lhs.needsLock == rhs.needsLock &&
+        lhs.isExternalAppLocked == rhs.isExternalAppLocked &&
         lhs.bundleURL == rhs.bundleURL &&
         lhs.containerKind == rhs.containerKind &&
         lhs.isSystemApp == rhs.isSystemApp &&

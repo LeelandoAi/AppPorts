@@ -4,6 +4,92 @@ import XCTest
 final class AppScannerTests: XCTestCase {
     private let fileManager = FileManager.default
 
+    func testAppItemEqualityIncludesExternalLockState() {
+        var locked = AppItem(name: "Locked.app", path: URL(fileURLWithPath: "/Applications/Locked.app"), status: AppStatus.linked)
+        let unlocked = locked
+
+        locked.isExternalAppLocked = true
+
+        XCTAssertNotEqual(locked, unlocked)
+    }
+
+    func testLocalScanPrecomputesExternalLockStateForStubPortal() async throws {
+        let workspace = try makeWorkspace()
+        let externalAppURL = workspace.externalRootURL.appendingPathComponent("Locked Stub.app")
+        let localAppURL = workspace.localAppsURL.appendingPathComponent("Locked Stub.app")
+        defer {
+            try? setImmutable(false, at: externalAppURL)
+            cleanupWorkspace(workspace.rootURL)
+        }
+
+        try createAppBundle(at: externalAppURL, payloadSize: 1024, version: "2.0")
+        try createAppBundle(at: localAppURL, payloadSize: 1024, version: "1.0")
+        try addSparkleMarker(to: externalAppURL)
+        try "#!/bin/sh\n".write(
+            to: localAppURL.appendingPathComponent("Contents/MacOS/launcher"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try externalAppURL.path.write(
+            to: localAppURL.appendingPathComponent("Contents/Resources/real_app_path.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try setImmutable(true, at: externalAppURL)
+
+        let items = await AppScanner().scanLocalApps(
+            at: workspace.localAppsURL,
+            runningAppURLs: Set<URL>()
+        )
+
+        let item = try XCTUnwrap(items.first)
+        XCTAssertEqual(item.status, AppStatus.linked)
+        XCTAssertTrue(item.isSparkleApp)
+        XCTAssertTrue(item.hasSelfUpdater)
+        XCTAssertTrue(item.needsLock)
+        XCTAssertTrue(item.isExternalAppLocked)
+        XCTAssertEqual(item.version, "1.0", "本地 Stub 版本必须保留，以便检测外部应用更新")
+    }
+
+    func testExternalScanPreservesLockMetadataForHighPriorityLinkedCandidates() async throws {
+        let workspace = try makeWorkspace()
+        let lockedExternalURL = workspace.externalRootURL.appendingPathComponent("Locked.app")
+        let unlockedExternalURL = workspace.externalRootURL.appendingPathComponent("Unlocked.app")
+        defer {
+            try? setImmutable(false, at: lockedExternalURL)
+            cleanupWorkspace(workspace.rootURL)
+        }
+
+        for externalURL in [lockedExternalURL, unlockedExternalURL] {
+            try createAppBundle(at: externalURL, payloadSize: 1024)
+            try addSparkleMarker(to: externalURL)
+            try fileManager.createSymbolicLink(
+                at: workspace.localAppsURL.appendingPathComponent(externalURL.lastPathComponent),
+                withDestinationURL: externalURL
+            )
+        }
+        try setImmutable(true, at: lockedExternalURL)
+
+        let items = await AppScanner().scanExternalApps(
+            at: workspace.externalRootURL,
+            localAppsDir: workspace.localAppsURL
+        )
+
+        let locked = try XCTUnwrap(items.first(where: { $0.name == lockedExternalURL.lastPathComponent }))
+        XCTAssertEqual(locked.status, AppStatus.linked)
+        XCTAssertTrue(locked.isSparkleApp)
+        XCTAssertTrue(locked.hasSelfUpdater)
+        XCTAssertTrue(locked.needsLock)
+        XCTAssertTrue(locked.isExternalAppLocked)
+
+        let unlocked = try XCTUnwrap(items.first(where: { $0.name == unlockedExternalURL.lastPathComponent }))
+        XCTAssertEqual(unlocked.status, AppStatus.linked)
+        XCTAssertTrue(unlocked.isSparkleApp)
+        XCTAssertTrue(unlocked.hasSelfUpdater)
+        XCTAssertTrue(unlocked.needsLock)
+        XCTAssertFalse(unlocked.isExternalAppLocked)
+    }
+
     func testDisplayedSizeForWholeAppSymlinkUsesLocalPortalFootprint() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }
@@ -269,6 +355,31 @@ final class AppScannerTests: XCTestCase {
 
     private func cleanupWorkspace(_ rootURL: URL) {
         try? fileManager.removeItem(at: rootURL)
+    }
+
+    private func addSparkleMarker(to appURL: URL) throws {
+        try fileManager.createDirectory(
+            at: appURL.appendingPathComponent("Contents/Frameworks/Sparkle.framework"),
+            withIntermediateDirectories: true
+        )
+    }
+
+    private func setImmutable(_ immutable: Bool, at url: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/chflags")
+        process.arguments = [immutable ? "uchg" : "nouchg", url.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "AppScannerTests.chflags",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "chflags failed for \(url.path)"]
+            )
+        }
     }
 
     private func createAppBundle(

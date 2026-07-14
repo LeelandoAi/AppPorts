@@ -291,24 +291,20 @@ struct DataDirsView: View {
                 } else if dotFolderItems.isEmpty {
                     ContentView.EmptyStateView(icon: "folder.badge.questionmark", text: "未发现已知工具目录".localized)
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 4) {
-                            ForEach(dotFolderItems) { item in
-                                DataDirRowView(
-                                    item: item,
-                                    isSelected: selectedItemID == item.id,
-                                    onMigrate: { askMigrate($0) },
-                                    onRestore: { askRestore($0) },
-                                    onManageExistingLink: { askManageExistingLink($0) },
-                                    onNormalizeManagedLink: { askNormalizeManagedLink($0) },
-                                    onRelinkExternalData: { askRelinkExternalData($0) }
-                                )
-                                .onTapGesture { selectedItemID = item.id }
-                                .padding(.horizontal, 10)
-                            }
-                        }
-                        .padding(.vertical, 8)
+                    List(dotFolderItems, selection: $selectedItemID) { item in
+                        DataDirRowView(
+                            item: item,
+                            isSelected: selectedItemID == item.id,
+                            onMigrate: { askMigrate($0) },
+                            onRestore: { askRestore($0) },
+                            onManageExistingLink: { askManageExistingLink($0) },
+                            onNormalizeManagedLink: { askNormalizeManagedLink($0) },
+                            onRelinkExternalData: { askRelinkExternalData($0) }
+                        )
+                        .tag(item.id)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10))
                     }
+                    .listStyle(.plain)
                 }
             }
         }
@@ -401,16 +397,12 @@ struct DataDirsView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
 
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(sortedApps, id: \.id) { app in
-                                AppListRow(app: app, isSelected: selectedApp?.id == app.id)
-                                    .onTapGesture { selectedApp = app }
-                            }
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 8)
+                    List(sortedApps, selection: selectedAppID) { app in
+                        AppListRow(app: app, isSelected: selectedApp?.id == app.id)
+                            .tag(app.id)
+                            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
                     }
+                    .listStyle(.plain)
                 }
             }
             .frame(minWidth: 200, maxWidth: 280)
@@ -706,13 +698,24 @@ struct DataDirsView: View {
         TreeItemView(
             item: item,
             level: level,
-            isSelected: selectedItemID == item.id,
+            selectedItemID: selectedItemID,
             onSelect: { selectedItemID = $0 },
             onMigrate: askMigrate,
             onRestore: askRestore,
             onManageExistingLink: askManageExistingLink,
             onNormalizeManagedLink: askNormalizeManagedLink,
             onRelinkExternalData: askRelinkExternalData
+        )
+    }
+
+    private var selectedAppID: Binding<String?> {
+        Binding(
+            get: { selectedApp?.id },
+            set: { newID in
+                selectedApp = newID.flatMap { id in
+                    localApps.first(where: { $0.id == id })
+                }
+            }
         )
     }
 
@@ -1782,7 +1785,7 @@ struct DataDirProgressOverlay: View {
 struct TreeItemView: View {
     let item: DataDirItem
     let level: Int
-    let isSelected: Bool
+    let selectedItemID: String?
     let onSelect: (String) -> Void
     let onMigrate: (DataDirItem) -> Void
     let onRestore: (DataDirItem) -> Void
@@ -1794,21 +1797,21 @@ struct TreeItemView: View {
         VStack(spacing: 0) {
             DataDirRowView(
                 item: item,
-                isSelected: isSelected,
+                isSelected: selectedItemID == item.id,
                 level: level,
+                onSelect: onSelect,
                 onMigrate: onMigrate,
                 onRestore: onRestore,
                 onManageExistingLink: onManageExistingLink,
                 onNormalizeManagedLink: onNormalizeManagedLink,
                 onRelinkExternalData: onRelinkExternalData
             )
-            .onTapGesture { onSelect(item.id) }
 
             ForEach(item.children) { child in
                 TreeItemView(
                     item: child,
                     level: level + 1,
-                    isSelected: isSelected,
+                    selectedItemID: selectedItemID,
                     onSelect: onSelect,
                     onMigrate: onMigrate,
                     onRestore: onRestore,
@@ -1887,7 +1890,7 @@ struct DataDirGroupCard: View {
                         TreeItemView(
                             item: item,
                             level: 0,
-                            isSelected: selectedItemID == item.id,
+                            selectedItemID: selectedItemID,
                             onSelect: onSelect,
                             onMigrate: onMigrate,
                             onRestore: onRestore,
