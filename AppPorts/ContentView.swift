@@ -344,8 +344,9 @@ struct ContentView: View {
     enum MainTab: String, CaseIterable, Hashable { case apps, dataDirs, customDirs }
     @State private var mainTab: MainTab = .apps
     @State private var selectedDataDirsTab: DataDirsView.DataTab = .toolDirs
-    @State private var selectedDataDirsApp: AppItem? = nil
-    @State private var isDataDirsScanning = false
+    @State private var selectedDataDirsAppID: AppItem.ID? = nil
+    @State private var isToolDirsScanning = false
+    @State private var isAppDirsScanning = false
     @State private var dataDirsRefreshTrigger = 0
     @State private var searchFocusRequest = 0
     @AppStorage("autoResignEnabled") private var autoResignEnabled = false
@@ -359,8 +360,9 @@ struct ContentView: View {
                     externalDriveURL: externalDriveURL,
                     localApps: localApps,
                     selectedTab: $selectedDataDirsTab,
-                    selectedApp: $selectedDataDirsApp,
-                    isScanning: $isDataDirsScanning,
+                    selectedAppID: $selectedDataDirsAppID,
+                    isToolDirsScanning: $isToolDirsScanning,
+                    isAppDirsScanning: $isAppDirsScanning,
                     autoResignEnabled: $autoResignEnabled,
                     refreshTrigger: dataDirsRefreshTrigger,
                     onSelectExternalDrive: openPanelForExternalDrive,
@@ -388,6 +390,7 @@ struct ContentView: View {
                         subtitle: localAppsSubtitle,
                         icon: "macmini",
                         actionButtonText: "＋",
+                        actionAccessibilityLabel: "选择要额外扫描的应用目录".localized,
                         onAction: addCustomLocalScanPath,
                         accessory: customLocalScanPaths.isEmpty ? nil : AnyView(localScanSourcesMenu)
                     )
@@ -924,29 +927,14 @@ struct ContentView: View {
         let subtitle: String // subtitle 可能是路径，也可能是 "未选择"
         let icon: String
         var actionButtonText: String? = nil
+        var actionAccessibilityLabel: String? = nil
         var onAction: (() -> Void)? = nil
         var accessory: AnyView? = nil
         
         var body: some View {
             VStack(spacing: 0) {
                 HStack(alignment: .center, spacing: 16) {
-                    Image(systemName: icon)
-                        .font(.system(size: 24))
-                        .foregroundColor(.accentColor)
-                        .frame(width: 32)
-                        
-                    VStack(alignment: .leading, spacing: 4) {
-                        // 将传入的 title 字符串转换为 Key，触发翻译
-                        Text(title)
-                            .font(.headline)
-                        
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(subtitle)
-                    }
+                    headerSummary
                     Spacer()
                     
                     if let btnText = actionButtonText, let action = onAction {
@@ -954,6 +942,7 @@ struct ContentView: View {
                         Button(btnText, action: action)
                             .controlSize(.small)
                             .buttonStyle(.bordered)
+                            .accessibilityLabel(actionAccessibilityLabel ?? btnText)
                     }
 
                     if let accessory {
@@ -967,7 +956,31 @@ struct ContentView: View {
                 Divider()
             }
             .background(.ultraThinMaterial) // Glassmorphism
-            .accessibilityElement(children: .combine)
+        }
+
+        private var headerSummary: some View {
+            HStack(alignment: .center, spacing: 16) {
+                Image(systemName: icon)
+                    .font(.system(size: 24))
+                    .foregroundColor(.accentColor)
+                    .frame(width: 32)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(subtitle)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityValue(subtitle)
             .accessibilityAddTraits(.isHeader)
         }
     }
@@ -1073,6 +1086,20 @@ struct ContentView: View {
             .foregroundColor(.secondary)
             .disabled(isDataDirsScanning)
             .help("刷新列表".localized)
+        }
+    }
+
+    private var selectedDataDirsApp: AppItem? {
+        guard let selectedDataDirsAppID else { return nil }
+        return localApps.first { $0.id == selectedDataDirsAppID && !$0.isFolder }
+    }
+
+    private var isDataDirsScanning: Bool {
+        switch selectedDataDirsTab {
+        case .toolDirs:
+            return isToolDirsScanning
+        case .appDirs:
+            return isAppDirsScanning
         }
     }
 

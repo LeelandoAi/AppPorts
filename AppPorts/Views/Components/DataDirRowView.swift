@@ -22,7 +22,7 @@ struct DataDirRowView: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             if let onSelect {
                 Button {
                     onSelect(item.id)
@@ -39,17 +39,17 @@ struct DataDirRowView: View {
             // 操作按钮
             operationButtons
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(isSelected
                       ? Color.accentColor.opacity(0.15)
                       : (isHovered ? Color(nsColor: .controlBackgroundColor) : .clear))
                 .shadow(color: isHovered && !isSelected ? Color.black.opacity(0.04) : .clear, radius: 4, y: 2)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(isSelected ? Color.accentColor.opacity(0.3) : (isHovered ? Color.primary.opacity(0.05) : .clear), lineWidth: 1)
         )
         .contentShape(Rectangle())
@@ -57,6 +57,7 @@ struct DataDirRowView: View {
             withAnimation(.easeInOut(duration: 0.2)) { isHovered = hovering }
         }
         .accessibilityElement(children: .contain)
+        .help(item.description)
         .contextMenu {
             Button("在 Finder 中显示".localized) {
                 NSWorkspace.shared.activateFileViewerSelecting([item.linkedDestination ?? item.path])
@@ -65,7 +66,7 @@ struct DataDirRowView: View {
     }
 
     private var rowSummary: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             // 树形缩进指示
             if level > 0 {
                 HStack(spacing: 0) {
@@ -82,37 +83,32 @@ struct DataDirRowView: View {
             }
             // 图标
             ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(iconColor.opacity(0.12))
-                    .frame(width: 38, height: 38)
+                    .frame(width: 32, height: 32)
                 Image(systemName: item.type.icon)
-                    .font(.system(size: 16))
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundColor(iconColor)
+                    .accessibilityHidden(true)
             }
 
-            // 名称 + 路径 + 标签
-            VStack(alignment: .leading, spacing: 3) {
+            // 名称 + 路径（说明文字保留在帮助和辅助功能提示中）
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(item.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.primary)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
 
                     // 优先级标签
                     PriorityBadge(priority: item.priority)
                 }
 
-                Text(item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                Text(displayPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-
-                // 说明文字
-                Text(item.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary.opacity(0.7))
-                    .lineLimit(1)
             }
 
             Spacer()
@@ -121,13 +117,13 @@ struct DataDirRowView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 if let size = item.size {
                     Text(size)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.primary)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
                         .monospacedDigit()
                 } else {
                     Text("计算中...".localized)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary.opacity(0.5))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
 
                 // 状态徽章
@@ -136,7 +132,10 @@ struct DataDirRowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(item.name), \(item.priority.localizedTitle)")
+        .accessibilityValue("\(DataDirStatus.localized(item.status)), \(item.size ?? "计算中...".localized), \(displayPath)")
+        .accessibilityHint(item.description)
     }
 
     // MARK: - 子视图
@@ -253,6 +252,10 @@ struct DataDirRowView: View {
         case .recommended: return .orange
         case .optional:    return .blue
         }
+    }
+
+    private var displayPath: String {
+        item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
     }
 }
 

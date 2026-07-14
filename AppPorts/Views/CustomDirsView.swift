@@ -96,6 +96,7 @@ struct CustomDirsView: View {
                 subtitle: String(format: "%lld 个目录".localized, Int64(configs.count)),
                 icon: "folder.fill",
                 actionButtonText: "＋",
+                actionAccessibilityLabel: "添加目录迁移".localized,
                 onAction: { showAddSheet = true }
             )
 

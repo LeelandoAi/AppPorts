@@ -37,10 +37,11 @@ struct DataDirsView: View {
     let localApps: [AppItem]
     /// 当前数据目录子页面，由 ContentView 顶部工具栏统一控制
     @Binding var selectedTab: DataTab
-    /// 当前选中的应用数据来源应用，由 ContentView 顶部工具栏读取重签名状态。
-    @Binding var selectedApp: AppItem?
-    /// 当前扫描状态，由 ContentView 顶部刷新按钮读取。
-    @Binding var isScanning: Bool
+    /// 当前选中的应用稳定 ID；展示元数据始终从最新 localApps 快照派生。
+    @Binding var selectedAppID: AppItem.ID?
+    /// 两个子页面独立的扫描状态，由 ContentView 顶部刷新按钮读取当前页状态。
+    @Binding var isToolDirsScanning: Bool
+    @Binding var isAppDirsScanning: Bool
     /// 数据迁移完成后自动重签名开关，由 ContentView 顶部工具栏控制。
     @Binding var autoResignEnabled: Bool
     /// 父级工具栏触发刷新时递增。
@@ -106,10 +107,13 @@ struct DataDirsView: View {
     @State private var showPermissionAlert = false
     @AppStorage("skipPermissionCheck") private var skipPermissionCheck = false
 
-    // 选中项（用于高亮）
-    @State private var selectedItemID: String? = nil
+    // 两个子页面各自维护选择，避免切换页面时复用无关 ID。
+    @State private var selectedToolItemID: String? = nil
+    @State private var selectedAppItemID: String? = nil
     @State private var dotFolderScanToken = UUID()
     @State private var libraryScanToken = UUID()
+    @State private var toolDirsScanTask: Task<Void, Never>?
+    @State private var appDirsScanTask: Task<Void, Never>?
 
     // 搜索
     @State private var appSearchText = ""
@@ -152,6 +156,15 @@ struct DataDirsView: View {
 
     private let appDataStatusOrder = ["本地", "已链接", "待规范", "现有软链", "待接回", "未找到"]
 
+    private var selectedApp: AppItem? {
+        guard let selectedAppID else { return nil }
+        return localApps.first { $0.id == selectedAppID && !$0.isFolder }
+    }
+
+    private var availableAppIDs: Set<AppItem.ID> {
+        Set(localApps.lazy.filter { !$0.isFolder }.map(\.id))
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -164,10 +177,21 @@ struct DataDirsView: View {
             }
         }
         .onAppear {
+            reconcileSelectedAppID()
             reloadCurrentTab()
         }
         .onChange(of: selectedTab) { _ in
             reloadCurrentTab()
+        }
+        .onChange(of: selectedAppID) { _ in
+            selectedAppItemID = nil
+            invalidateAppDirsScan(clearItems: true)
+            if selectedTab == .appDirs, let app = selectedApp {
+                scanLibraryDirs(for: app)
+            }
+        }
+        .onChange(of: availableAppIDs) { _ in
+            reconcileSelectedAppID()
         }
         .onChange(of: refreshTrigger) { _ in
             reloadCurrentTab()
@@ -177,6 +201,10 @@ struct DataDirsView: View {
         }
         .onChange(of: languageManager.language) { _ in
             reloadCurrentTab()
+        }
+        .onDisappear {
+            invalidateToolDirsScan()
+            invalidateAppDirsScan(clearItems: false)
         }
         // 确认弹窗
         .alert(LocalizedStringKey(confirmTitle), isPresented: $showConfirm) {
@@ -286,15 +314,15 @@ struct DataDirsView: View {
             ZStack {
                 Color(nsColor: .controlBackgroundColor).ignoresSafeArea()
 
-                if isScanning && dotFolderItems.isEmpty {
+                if isToolDirsScanning && dotFolderItems.isEmpty {
                     loadingView
                 } else if dotFolderItems.isEmpty {
                     ContentView.EmptyStateView(icon: "folder.badge.questionmark", text: "未发现已知工具目录".localized)
                 } else {
-                    List(dotFolderItems, selection: $selectedItemID) { item in
+                    List(dotFolderItems, selection: $selectedToolItemID) { item in
                         DataDirRowView(
                             item: item,
-                            isSelected: selectedItemID == item.id,
+                            isSelected: selectedToolItemID == item.id,
                             onMigrate: { askMigrate($0) },
                             onRestore: { askRestore($0) },
                             onManageExistingLink: { askManageExistingLink($0) },
@@ -397,8 +425,8 @@ struct DataDirsView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
 
-                    List(sortedApps, selection: selectedAppID) { app in
-                        AppListRow(app: app, isSelected: selectedApp?.id == app.id)
+                    List(sortedApps, selection: $selectedAppID) { app in
+                        AppListRow(app: app, isSelected: selectedAppID == app.id)
                             .tag(app.id)
                             .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
                     }
@@ -406,22 +434,6 @@ struct DataDirsView: View {
                 }
             }
             .frame(minWidth: 200, maxWidth: 280)
-            .onChange(of: selectedApp) { newApp in
-                if let app = newApp { scanLibraryDirs(for: app) }
-                else {
-                    libraryScanToken = UUID()
-                    libraryItems = []
-                    isScanning = false
-                }
-            }
-            .onChange(of: localApps) { newApps in
-                // 重签名/迁移后刷新 selectedApp，避免持有旧的 isResigned 等字段
-                // 用 path 匹配而非 id（id 每次扫描都是新 UUID）
-                if let selected = selectedApp,
-                   let refreshed = newApps.first(where: { $0.path == selected.path }) {
-                    selectedApp = refreshed
-                }
-            }
 
             // 右侧：关联数据目录
             VStack(spacing: 0) {
@@ -462,7 +474,7 @@ struct DataDirsView: View {
 
                     if selectedApp == nil {
                         ContentView.EmptyStateView(icon: "arrow.left.circle", text: "从左侧选择一个应用".localized)
-                    } else if isScanning && libraryItems.isEmpty {
+                    } else if isAppDirsScanning && libraryItems.isEmpty {
                         loadingView
                     } else if libraryItems.isEmpty {
                         ContentView.EmptyStateView(icon: "folder.badge.questionmark", text: "未找到关联数据目录".localized)
@@ -474,8 +486,8 @@ struct DataDirsView: View {
                                 ForEach(groupedLibraryItems, id: \.type) { group in
                                     DataDirGroupCard(
                                         group: group,
-                                        selectedItemID: selectedItemID,
-                                        onSelect: { selectedItemID = $0 },
+                                        selectedItemID: selectedAppItemID,
+                                        onSelect: { selectedAppItemID = $0 },
                                         onMigrate: askMigrate,
                                         onRestore: askRestore,
                                         onManageExistingLink: askManageExistingLink,
@@ -698,24 +710,13 @@ struct DataDirsView: View {
         TreeItemView(
             item: item,
             level: level,
-            selectedItemID: selectedItemID,
-            onSelect: { selectedItemID = $0 },
+            selectedItemID: selectedAppItemID,
+            onSelect: { selectedAppItemID = $0 },
             onMigrate: askMigrate,
             onRestore: askRestore,
             onManageExistingLink: askManageExistingLink,
             onNormalizeManagedLink: askNormalizeManagedLink,
             onRelinkExternalData: askRelinkExternalData
-        )
-    }
-
-    private var selectedAppID: Binding<String?> {
-        Binding(
-            get: { selectedApp?.id },
-            set: { newID in
-                selectedApp = newID.flatMap { id in
-                    localApps.first(where: { $0.id == id })
-                }
-            }
         )
     }
 
@@ -896,19 +897,52 @@ struct DataDirsView: View {
             level: "TRACE"
         )
         if selectedTab == .toolDirs {
+            invalidateAppDirsScan(clearItems: false)
             scanDotFolders()
         } else {
-            dotFolderScanToken = UUID()
+            invalidateToolDirsScan()
             if let app = selectedApp {
                 scanLibraryDirs(for: app)
+            } else {
+                invalidateAppDirsScan(clearItems: true)
             }
         }
     }
 
+    private func invalidateToolDirsScan() {
+        toolDirsScanTask?.cancel()
+        toolDirsScanTask = nil
+        dotFolderScanToken = UUID()
+        isToolDirsScanning = false
+    }
+
+    private func invalidateAppDirsScan(clearItems: Bool) {
+        appDirsScanTask?.cancel()
+        appDirsScanTask = nil
+        libraryScanToken = UUID()
+        isAppDirsScanning = false
+        if clearItems {
+            libraryItems = []
+        }
+    }
+
+    private func containsDataDir(id: DataDirItem.ID, in items: [DataDirItem]) -> Bool {
+        items.contains { item in
+            item.id == id || containsDataDir(id: id, in: item.children)
+        }
+    }
+
+    private func reconcileSelectedAppID() {
+        if let selectedAppID, !availableAppIDs.contains(selectedAppID) {
+            self.selectedAppID = nil
+        }
+    }
+
     private func scanDotFolders() {
+        invalidateToolDirsScan()
         let scanToken = UUID()
         dotFolderScanToken = scanToken
-        isScanning = true
+        isToolDirsScanning = true
         let selectedExternalRoot = externalDriveURL
         let scanID = AppLogger.shared.makeOperationID(prefix: "scan-dot-folders")
         AppLogger.shared.logContext(
@@ -918,15 +952,20 @@ struct DataDirsView: View {
                 ("external_root", selectedExternalRoot?.path)
             ]
         )
-        Task.detached(priority: .userInitiated) {
+        toolDirsScanTask = Task.detached(priority: .userInitiated) {
             let scanner = DataDirScanner()
             let items = await scanner.scanKnownDotFolders(externalRootURL: selectedExternalRoot)
+            guard !Task.isCancelled else { return }
             let initialItems = items
 
             await MainActor.run {
                 guard self.dotFolderScanToken == scanToken else { return }
                 self.dotFolderItems = initialItems
-                self.isScanning = false
+                if let selectedToolItemID = self.selectedToolItemID,
+                   !self.containsDataDir(id: selectedToolItemID, in: initialItems) {
+                    self.selectedToolItemID = nil
+                }
+                self.isToolDirsScanning = false
             }
             AppLogger.shared.logContext(
                 "工具目录扫描完成",
@@ -938,6 +977,7 @@ struct DataDirsView: View {
             )
 
             // 并行计算所有目录大小（TaskGroup，非 actor 隔离的 fastDirectorySize）
+            guard !Task.isCancelled else { return }
             let sizedItems = await withTaskGroup(of: (Int, Int64).self) { group in
                 var results: [(Int, Int64)] = []
                 var iterator = items.indices.makeIterator()
@@ -975,15 +1015,16 @@ struct DataDirsView: View {
                         self.dotFolderItems[i].sizeBytes = sizeBytes
                     }
                 }
+                self.toolDirsScanTask = nil
             }
         }
     }
 
     private func scanLibraryDirs(for app: AppItem) {
+        invalidateAppDirsScan(clearItems: false)
         let scanToken = UUID()
         libraryScanToken = scanToken
-        isScanning = true
-        libraryItems = []
+        isAppDirsScanning = true
         let appDisplayName = app.displayName
         let appID = app.id
         let selectedExternalRoot = externalDriveURL
@@ -997,15 +1038,20 @@ struct DataDirsView: View {
                 ("external_root", selectedExternalRoot?.path)
             ]
         )
-        Task.detached(priority: .userInitiated) {
+        appDirsScanTask = Task.detached(priority: .userInitiated) {
             let scanner = DataDirScanner()
             let items = await scanner.scanLibraryDirs(for: app, externalRootURL: selectedExternalRoot)
+            guard !Task.isCancelled else { return }
 
             await MainActor.run {
                 guard self.libraryScanToken == scanToken,
-                      self.selectedApp?.id == appID else { return }
+                      self.selectedAppID == appID else { return }
                 self.libraryItems = items
-                self.isScanning = false
+                if let selectedAppItemID = self.selectedAppItemID,
+                   !self.containsDataDir(id: selectedAppItemID, in: items) {
+                    self.selectedAppItemID = nil
+                }
+                self.isAppDirsScanning = false
             }
             AppLogger.shared.logContext(
                 "应用数据目录扫描完成",
@@ -1018,6 +1064,7 @@ struct DataDirsView: View {
             )
 
             // 并行计算所有目录大小
+            guard !Task.isCancelled else { return }
             let sizedItems = await withTaskGroup(of: (Int, Int64).self) { group in
                 var results: [(Int, Int64)] = []
                 var iterator = items.indices.makeIterator()
@@ -1047,7 +1094,7 @@ struct DataDirsView: View {
 
             await MainActor.run {
                 guard self.libraryScanToken == scanToken,
-                      self.selectedApp?.id == appID else { return }
+                      self.selectedAppID == appID else { return }
                 for (i, sizeBytes) in sizedItems {
                     guard i < self.libraryItems.count else { continue }
                     let sizeStr = LocalizedByteCountFormatter.string(fromByteCount: sizeBytes)
@@ -1056,6 +1103,7 @@ struct DataDirsView: View {
                         self.libraryItems[i].sizeBytes = sizeBytes
                     }
                 }
+                self.appDirsScanTask = nil
             }
         }
     }
@@ -1295,7 +1343,6 @@ struct DataDirsView: View {
                 )
                 await MainActor.run {
                     self.showProgress = false
-                    self.refreshSelectedApp()
                     self.errorMessage = error.localizedDescription
                     self.showError = true
                 }
@@ -1559,14 +1606,6 @@ struct DataDirsView: View {
     }
 
     // MARK: - 权限与运行检查
-
-    /// 从 localApps 中刷新 selectedApp，确保 isResigned 等字段为最新
-    private func refreshSelectedApp() {
-        if let selected = selectedApp,
-           let refreshed = localApps.first(where: { $0.path == selected.path }) {
-            selectedApp = refreshed
-        }
-    }
 
     /// 检查数据目录关联的应用是否正在运行
     ///

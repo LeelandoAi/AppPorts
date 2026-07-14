@@ -15,6 +15,7 @@ struct CustomDirRowView: View {
     let onRemove: (CustomDirConfig) -> Void
 
     @State private var isHovered = false
+    @State private var showDeleteLinkConfirmation = false
 
     private var showsDeleteLinkButton: Bool {
         entry.kind == .local
@@ -26,7 +27,7 @@ struct CustomDirRowView: View {
             rowSummary
 
             if showsDeleteLinkButton {
-                Button(role: .destructive, action: { onDeleteLink(entry) }) {
+                Button(role: .destructive, action: { showDeleteLinkConfirmation = true }) {
                     Image(systemName: "link.badge.minus")
                         .foregroundColor(.red)
                 }
@@ -59,8 +60,8 @@ struct CustomDirRowView: View {
 
             if showsDeleteLinkButton {
                 Divider()
-                Button("断开链接".localized) {
-                    onDeleteLink(entry)
+                Button("断开链接".localized, role: .destructive) {
+                    showDeleteLinkConfirmation = true
                 }
             }
 
@@ -69,6 +70,14 @@ struct CustomDirRowView: View {
             Button("移除记录".localized) {
                 onRemove(entry.config)
             }
+        }
+        .confirmationDialog("断开链接".localized, isPresented: $showDeleteLinkConfirmation) {
+            Button("断开".localized, role: .destructive) {
+                onDeleteLink(entry)
+            }
+            Button("取消".localized, role: .cancel) {}
+        } message: {
+            Text("断开此链接并保留外部文件夹".localized)
         }
     }
 
