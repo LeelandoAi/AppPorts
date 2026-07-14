@@ -8,6 +8,79 @@
 import SwiftUI
 import AppKit
 
+struct AppSearchFocusActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var focusAppSearchAction: (() -> Void)? {
+        get { self[AppSearchFocusActionKey.self] }
+        set { self[AppSearchFocusActionKey.self] = newValue }
+    }
+}
+
+struct AppSearchCommands: Commands {
+    @FocusedValue(\.focusAppSearchAction) private var focusAppSearch
+
+    var body: some Commands {
+        CommandGroup(after: .textEditing) {
+            Button("搜索应用 (本地 / 外部)...".localized) {
+                focusAppSearch?()
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(focusAppSearch == nil)
+        }
+    }
+}
+
+private struct ToolbarSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let prompt: String
+    let focusRequest: Int
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let searchField = NSSearchField()
+        searchField.placeholderString = prompt
+        searchField.delegate = context.coordinator
+        searchField.sendsSearchStringImmediately = true
+        return searchField
+    }
+
+    func updateNSView(_ searchField: NSSearchField, context: Context) {
+        context.coordinator.text = $text
+        if searchField.stringValue != text {
+            searchField.stringValue = text
+        }
+        searchField.placeholderString = prompt
+
+        guard context.coordinator.lastFocusRequest != focusRequest else { return }
+        context.coordinator.lastFocusRequest = focusRequest
+        DispatchQueue.main.async {
+            searchField.window?.makeFirstResponder(searchField)
+        }
+    }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var text: Binding<String>
+        var lastFocusRequest = 0
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let searchField = notification.object as? NSSearchField else { return }
+            if text.wrappedValue != searchField.stringValue {
+                text.wrappedValue = searchField.stringValue
+            }
+        }
+    }
+}
+
 // MARK: - MarkdownTextView (NSTextView wrapper for Markdown rendering)
 private struct MarkdownTextView: NSViewRepresentable {
     let markdown: String
@@ -262,121 +335,24 @@ struct ContentView: View {
     // Track previous external drive URL for logging
     @State private var previousExternalDriveURL: URL?
 
-    enum SortOption {
+    enum SortOption: String, CaseIterable, Hashable {
         case name, size
     }
     @State private var sortOption: SortOption = .name
 
     // MARK: - Tab
-    enum MainTab { case apps, dataDirs, customDirs }
+    enum MainTab: String, CaseIterable, Hashable { case apps, dataDirs, customDirs }
     @State private var mainTab: MainTab = .apps
     @State private var selectedDataDirsTab: DataDirsView.DataTab = .toolDirs
     @State private var selectedDataDirsApp: AppItem? = nil
     @State private var isDataDirsScanning = false
     @State private var dataDirsRefreshTrigger = 0
+    @State private var searchFocusRequest = 0
     @AppStorage("autoResignEnabled") private var autoResignEnabled = false
 
-    var body: some View {
+    @ViewBuilder
+    private var mainContent: some View {
         VStack(spacing: 0) {
-            // MARK: - Top Toolbar
-            HStack(spacing: 14) {
-                // Tab 切换器
-                HStack(spacing: 4) {
-                    TabButton(title: "应用".localized, systemImage: "cube", isSelected: mainTab == .apps) {
-                        withAnimation { mainTab = .apps }
-                    }
-                    TabButton(title: "数据目录".localized, systemImage: "cylinder", isSelected: mainTab == .dataDirs) {
-                        withAnimation { mainTab = .dataDirs }
-                    }
-                    TabButton(title: "目录迁移".localized, systemImage: "folder.badge.gearshape", isSelected: mainTab == .customDirs) {
-                        withAnimation { mainTab = .customDirs }
-                    }
-                }
-                .padding(3)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                        )
-                )
-
-                if mainTab == .dataDirs {
-                    HStack(spacing: 4) {
-                        TabButton(title: "工具目录".localized, isSelected: selectedDataDirsTab == .toolDirs) {
-                            withAnimation { selectedDataDirsTab = .toolDirs }
-                        }
-                        TabButton(title: "应用数据".localized, isSelected: selectedDataDirsTab == .appDirs) {
-                            withAnimation { selectedDataDirsTab = .appDirs }
-                        }
-                    }
-                    .padding(3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                            )
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .leading)))
-                }
-
-                if mainTab == .apps {
-                    // Search Bar
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.secondary)
-                        TextField("搜索应用 (本地 / 外部)...".localized, text: $searchText)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13))
-                    }
-                    .padding(8)
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .cornerRadius(6)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-                    )
-
-                    // Sort Button
-                    Menu {
-                        Button(action: { sortOption = .name }) {
-                            HStack {
-                                Text("按名称".localized)
-                                Spacer()
-                                if sortOption == .name { Image(systemName: "checkmark") }
-                            }
-                        }
-                        Button(action: { sortOption = .size }) {
-                            HStack {
-                                Text("按大小".localized)
-                                Spacer()
-                                if sortOption == .size { Image(systemName: "checkmark") }
-                            }
-                        }
-                    } label: {
-                        Label("排序".localized, systemImage: "line.3.horizontal.decrease.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("排序方式".localized)
-                }
-
-                Spacer()
-
-                if mainTab == .dataDirs {
-                    dataDirsToolbarControls
-                }
-
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial)
-
-            Divider()
-
             // MARK: - 主内容区（Tab 切换）
             if mainTab == .dataDirs {
                 DataDirsView(
@@ -413,7 +389,6 @@ struct ContentView: View {
                         icon: "macmini",
                         actionButtonText: "＋",
                         onAction: addCustomLocalScanPath,
-                        onRefresh: { scanLocalApps() },
                         accessory: customLocalScanPaths.isEmpty ? nil : AnyView(localScanSourcesMenu)
                     )
 
@@ -464,8 +439,7 @@ struct ContentView: View {
                         subtitle: externalDriveURL?.path ?? "未选择".localized,
                         icon: "externaldrive.fill",
                         actionButtonText: "选择文件夹".localized,
-                        onAction: openPanelForExternalDrive,
-                        onRefresh: { scanExternalApps() }
+                        onAction: openPanelForExternalDrive
                     )
                 
                 ZStack {
@@ -554,7 +528,17 @@ struct ContentView: View {
             } // end HSplitView for mainTab == .apps
             } // end else for mainTab == .apps
         }
-        .frame(minWidth: 900, minHeight: 600) // Increased window size
+    }
+
+    var body: some View {
+        mainContent
+        .frame(minWidth: 900, idealWidth: 1100, minHeight: 600, idealHeight: 720)
+        .toolbar {
+            mainToolbar
+        }
+        .focusedSceneValue(\.focusAppSearchAction) {
+            focusApplicationSearch()
+        }
         .onAppear {
             // Restore persistence
             if let savedPath = UserDefaults.standard.string(forKey: "ExternalDrivePath") {
@@ -775,6 +759,125 @@ struct ContentView: View {
             }
         }
     }
+
+    @ToolbarContentBuilder
+    private var mainToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            mainNavigationControl
+        }
+
+        ToolbarItem(placement: .automatic) {
+            secondaryToolbarControl
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            leadingPrimaryToolbarControl
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            sortToolbarControl
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            refreshToolbarControl
+        }
+    }
+
+    private var mainNavigationControl: some View {
+        Picker(mainNavigationLabel, selection: $mainTab) {
+            Text("应用".localized).tag(MainTab.apps)
+            Text("数据目录".localized).tag(MainTab.dataDirs)
+            Text("目录迁移".localized).tag(MainTab.customDirs)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 330)
+        .accessibilityLabel(mainNavigationLabel)
+    }
+
+    private var mainNavigationLabel: String {
+        ["应用".localized, "数据目录".localized, "目录迁移".localized]
+            .joined(separator: " / ")
+    }
+
+    @ViewBuilder
+    private var secondaryToolbarControl: some View {
+        if mainTab == .dataDirs {
+            Picker(dataDirectoryNavigationLabel, selection: $selectedDataDirsTab) {
+                Text("工具目录".localized).tag(DataDirsView.DataTab.toolDirs)
+                Text("应用数据".localized).tag(DataDirsView.DataTab.appDirs)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 170)
+            .accessibilityLabel(dataDirectoryNavigationLabel)
+        }
+    }
+
+    private var dataDirectoryNavigationLabel: String {
+        ["工具目录".localized, "应用数据".localized]
+            .joined(separator: " / ")
+    }
+
+    @ViewBuilder
+    private var leadingPrimaryToolbarControl: some View {
+        if mainTab == .dataDirs {
+            dataDirsToolbarControls
+        } else if mainTab == .apps {
+            applicationSearchField
+        }
+    }
+
+    @ViewBuilder
+    private var sortToolbarControl: some View {
+        if mainTab == .apps {
+            applicationSortMenu
+        }
+    }
+
+    @ViewBuilder
+    private var refreshToolbarControl: some View {
+        if mainTab == .apps {
+            applicationRefreshButton
+        }
+    }
+
+    private var applicationSearchField: some View {
+        ToolbarSearchField(
+            text: $searchText,
+            prompt: "搜索应用 (本地 / 外部)...".localized,
+            focusRequest: searchFocusRequest
+        )
+        .frame(width: 220)
+        .accessibilityLabel("搜索应用 (本地 / 外部)...".localized)
+    }
+
+    private var applicationSortMenu: some View {
+        Menu {
+            Button {
+                sortOption = .name
+            } label: {
+                Label("按名称".localized, systemImage: sortOption == .name ? "checkmark" : "textformat")
+            }
+
+            Button {
+                sortOption = .size
+            } label: {
+                Label("按大小".localized, systemImage: sortOption == .size ? "checkmark" : "internaldrive")
+            }
+        } label: {
+            Label("排序".localized, systemImage: "arrow.up.arrow.down")
+        }
+        .help("排序方式".localized)
+    }
+
+    private var applicationRefreshButton: some View {
+        Button(action: refreshApplications) {
+            Label("刷新列表".localized, systemImage: "arrow.clockwise")
+        }
+        .help("刷新列表".localized)
+        .accessibilityLabel("刷新列表".localized)
+    }
     
     // MARK: - 过滤逻辑
     
@@ -799,8 +902,9 @@ struct ContentView: View {
     func sortApps(_ apps: [AppItem]) -> [AppItem] {
         switch sortOption {
         case .name:
-            // Already sorted by name in scanner, but good to ensure
-            return apps // Scanner already sorts by Link status then Name
+            return apps.sorted {
+                $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+            }
         case .size:
             return apps.sorted { 
                  // Keep "Linked" on top? Maybe not for size sort. Let's strict size sort.
@@ -821,7 +925,6 @@ struct ContentView: View {
         let icon: String
         var actionButtonText: String? = nil
         var onAction: (() -> Void)? = nil
-        var onRefresh: (() -> Void)? = nil
         var accessory: AnyView? = nil
         
         var body: some View {
@@ -857,14 +960,6 @@ struct ContentView: View {
                         accessory
                     }
 
-                    if let onRefresh {
-                        Button(action: onRefresh) {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .buttonStyle(.borderless)
-                        .padding(.leading, 8)
-                        .help("刷新列表".localized)
-                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.vertical, 16)
@@ -981,38 +1076,17 @@ struct ContentView: View {
         }
     }
 
-    /// Tab 切换按钮（顶部工具栏用）
-    struct TabButton: View {
-        let title: String
-        var systemImage: String? = nil
-        let isSelected: Bool
-        let action: () -> Void
+    // MARK: - 逻辑函数
 
-        var body: some View {
-            Button(action: action) {
-                HStack(spacing: 7) {
-                    if let systemImage {
-                        Image(systemName: systemImage)
-                            .font(.system(size: 15, weight: .medium))
-                    }
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(isSelected ? .accentColor : .secondary)
-                .padding(.horizontal, systemImage == nil ? 14 : 12)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(isSelected ? Color(nsColor: .windowBackgroundColor) : Color.clear)
-                        .shadow(color: isSelected ? Color.black.opacity(0.12) : Color.clear, radius: 2, x: 0, y: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            }
-            .buttonStyle(.plain)
-        }
+    private func refreshApplications() {
+        scanLocalApps()
+        scanExternalApps()
     }
 
-    // MARK: - 逻辑函数
+    private func focusApplicationSearch() {
+        mainTab = .apps
+        searchFocusRequest += 1
+    }
     
     func getMoveButtonTitle() -> (text: String, isError: Bool) {
         // 获取所有选中且可迁移的应用

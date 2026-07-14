@@ -68,7 +68,10 @@ struct AppMoverApp: App {
                     .id(languageManager.language)
             }
         }
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
+            AppSearchCommands()
+
             // 原有的关于菜单
             CommandGroup(replacing: .appInfo) {
                 Button("关于 AppPorts...".localized) {
