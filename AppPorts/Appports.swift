@@ -171,5 +171,13 @@ struct AppMoverApp: App {
                 }
             }
         }
+
+        #if os(macOS)
+        Settings {
+            AppStoreSettingsView()
+                .environment(\.locale, languageManager.locale)
+                .id(languageManager.language)
+        }
+        #endif
     }
 }

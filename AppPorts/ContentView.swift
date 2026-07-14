@@ -246,9 +246,6 @@ struct ContentView: View {
     // App Store 外部安装引导
     @State private var showMASGuidance = false
 
-    // 设置页面
-    @State private var showAppStoreSettings = false
-    
     // 单应用复制进度
     @State private var progressBytes: Int64 = 0
     @State private var progressTotalBytes: Int64 = 0
@@ -373,12 +370,6 @@ struct ContentView: View {
                     dataDirsToolbarControls
                 }
 
-                // App Store Settings Button（始终显示）
-                Button(action: { showAppStoreSettings = true }) {
-                    Label("设置".localized, systemImage: "gearshape")
-                }
-                .buttonStyle(.borderless)
-                .help("App Store 应用迁移设置".localized)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 8)
@@ -765,10 +756,6 @@ struct ContentView: View {
             Button("稍后".localized, role: .cancel) {}
         } message: {
             Text("macOS 15.1+ 支持将 App Store 应用安装到外部磁盘。\n\n请在 App Store → 设置中勾选「将大型 App 下载并安装到独立磁盘」，并选择当前外部驱动器。\n\n设置完成后点击「我已设置」，AppPorts 会自动创建 Applications 目录并检测管理这些应用。".localized)
-        }
-        // App Store 设置页面
-        .sheet(isPresented: $showAppStoreSettings) {
-            AppStoreSettingsView()
         }
         // 进度覆盖层
         .overlay {

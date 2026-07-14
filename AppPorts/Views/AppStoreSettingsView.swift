@@ -50,9 +50,7 @@ struct AppStoreSettingsView: View {
     
     /// 是否启用开机自动重签名（默认开启）
     @AppStorage("autoResignAtLogin") private var autoResignAtLogin = true
-
-    /// 环境变量：用于关闭弹窗
-    @Environment(\.dismiss) private var dismiss
+    @State private var showClearLogConfirmation = false
 
     private var isMASExternalSupported: Bool { AppMigrationService.isMASExternalInstallSupported }
 
@@ -62,20 +60,9 @@ struct AppStoreSettingsView: View {
             HStack {
                 Image(systemName: "app.badge.checkmark")
                     .font(.title2)
-                    .foregroundColor(.blue)
+                    .foregroundStyle(.tint)
                 Text("设置".localized)
                     .font(.title2.bold())
-
-                Spacer()
-
-                // 关闭按钮
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("关闭".localized)
             }
             .padding(.bottom, 8)
 
@@ -210,6 +197,7 @@ struct AppStoreSettingsView: View {
                             Text("50 MB").tag(50 * 1024 * 1024)
                             Text("100 MB").tag(100 * 1024 * 1024)
                         }
+                        .labelsHidden()
                         .frame(width: 100)
                     }
                     
@@ -224,8 +212,8 @@ struct AppStoreSettingsView: View {
                         
                         Spacer()
                         
-                        Button("清空日志".localized) {
-                            AppLogger.shared.clearLog()
+                        Button("清空日志".localized, role: .destructive) {
+                            showClearLogConfirmation = true
                         }
                     }
                 }
@@ -290,6 +278,16 @@ struct AppStoreSettingsView: View {
         }
         .padding(24)
         .frame(minWidth: 420, minHeight: 550)
+        .confirmationDialog(
+            "清空日志".localized,
+            isPresented: $showClearLogConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("清空日志".localized, role: .destructive) {
+                AppLogger.shared.clearLog()
+            }
+            Button("取消".localized, role: .cancel) { }
+        }
     }
 }
 
