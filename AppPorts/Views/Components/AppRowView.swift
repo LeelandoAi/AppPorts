@@ -21,6 +21,7 @@ struct AppRowView: View {
     var onMoveOutWholeSymlink: ((AppItem) -> Void)? = nil
     
     @State private var isHovered = false
+    @State private var showDeleteLinkConfirmation = false
     
     var body: some View {
         HStack(spacing: 14) {
@@ -52,16 +53,18 @@ struct AppRowView: View {
             
             Spacer()
             
-            if showDeleteLinkButton && (app.status == AppStatus.linked || app.status == AppStatus.orphanedLink) {
-                Button(action: { onDeleteLink(app) }) {
-                    Image(systemName: "link.badge.plus")
-                        .foregroundColor(.red)
+            if showDeleteLinkButton,
+               (app.status == AppStatus.linked || app.status == AppStatus.orphanedLink),
+               (isHovered || isSelected) {
+                Button(role: .destructive, action: { showDeleteLinkConfirmation = true }) {
+                    Image(systemName: "link.badge.minus")
                 }
                 .buttonStyle(.plain)
                 .padding(6)
                 .background(Color.red.opacity(0.1))
                 .clipShape(Circle())
-                .help("断开此链接并删除文件".localized)
+                .help("断开此链接并保留外部文件夹".localized)
+                .accessibilityLabel("断开链接".localized)
             }
             
             if showMoveBackButton {
@@ -89,7 +92,7 @@ struct AppRowView: View {
             }
         }
         // Accessibility: Combine row into single element
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(
             Text(app.displayName) + Text(", ") +
             Text(AppStatus.localized(app.status)) +
@@ -109,8 +112,13 @@ struct AppRowView: View {
 
             if app.status == AppStatus.orphanedLink {
                 Divider()
-                Button("删除孤立链接".localized) {
-                    onDeleteLink(app)
+                Button("删除孤立链接".localized, role: .destructive) {
+                    showDeleteLinkConfirmation = true
+                }
+            } else if app.status == AppStatus.linked {
+                Divider()
+                Button("断开链接".localized, role: .destructive) {
+                    showDeleteLinkConfirmation = true
                 }
             }
 
@@ -130,6 +138,18 @@ struct AppRowView: View {
                     onRestoreSignature(app)
                 }
             }
+        }
+        .confirmationDialog(
+            "断开链接".localized,
+            isPresented: $showDeleteLinkConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("断开".localized, role: .destructive) {
+                onDeleteLink(app)
+            }
+            Button("取消".localized, role: .cancel) { }
+        } message: {
+            Text("断开此链接并保留外部文件夹".localized)
         }
     }
 }

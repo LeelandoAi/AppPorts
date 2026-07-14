@@ -26,8 +26,8 @@ import SwiftUI
 ///
 /// - Note: 界面使用弹性动画，提升用户体验
 struct WelcomeView: View {
-    /// 控制欢迎界面显示/隐藏的绑定变量
-    @Binding var showWelcomeScreen: Bool
+    /// 首次引导完成状态
+    @Binding var hasCompletedOnboarding: Bool
     
     /// 语言管理器，用于多语言切换
     @ObservedObject private var languageManager = LanguageManager.shared
@@ -49,7 +49,8 @@ struct WelcomeView: View {
             )
             .ignoresSafeArea()
             
-            VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 0) {
                 // MARK: - Header Section
                 VStack(spacing: 20) {
                     Image(nsImage: NSApplication.shared.applicationIconImage)
@@ -62,7 +63,7 @@ struct WelcomeView: View {
                         
                     VStack(spacing: 8) {
                         Text("欢迎使用 AppPorts".localized)
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .font(.largeTitle.bold())
                             .foregroundStyle(
                                 LinearGradient(
                                     colors: [.primary, .primary.opacity(0.8)],
@@ -71,20 +72,20 @@ struct WelcomeView: View {
                                 )
                             )
                         
-                        Text("您的应用，随处安家。".localized) // New Key needed, or reuse generic
-                            .font(.system(size: 16, weight: .medium, design: .rounded))
-                            .foregroundColor(.secondary)
+                        Text("您的应用，随处安家。".localized)
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
                     }
                     .offset(y: isAnimating ? 0 : 10)
                     .opacity(isAnimating ? 1 : 0)
                 }
-                .padding(.top, 40)
-                .padding(.bottom, 40)
+                .padding(.top, 32)
+                .padding(.bottom, 28)
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(.isHeader)
                 
                 // MARK: - Features List
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     FeatureRow(
                         icon: "externaldrive.fill.badge.plus",
                         color: .orange,
@@ -107,10 +108,11 @@ struct WelcomeView: View {
                     )
                 }
                 .padding(.horizontal, 40)
+                .frame(maxWidth: 640)
                 .offset(y: isAnimating ? 0 : 20)
                 .opacity(isAnimating ? 1 : 0)
                 
-                Spacer()
+                Spacer(minLength: 32)
                 
                 // MARK: - Permission & Action
                 VStack(spacing: 24) {
@@ -121,6 +123,7 @@ struct WelcomeView: View {
                                 .font(.title2)
                                 .foregroundColor(.orange)
                                 .padding(.top, 2)
+                                .accessibilityHidden(true)
                             
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("需要“完全磁盘访问权限”".localized)
@@ -142,49 +145,50 @@ struct WelcomeView: View {
                                 }
                                 .buttonStyle(.link)
                                 .padding(.top, 2)
+                                .accessibilityHint("双击打开系统设置".localized)
                             }
                         }
                         .padding(16)
                         .background(.ultraThinMaterial)
-                        .cornerRadius(16)
+                        .clipShape(.rect(cornerRadius: 16))
                         .overlay(
                             RoundedRectangle(cornerRadius: 16)
                                 .stroke(Color.primary.opacity(0.05), lineWidth: 1)
                         )
                         .shadow(color: .black.opacity(0.03), radius: 5, x: 0, y: 2)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityAddTraits(.isButton)
-                        .accessibilityHint("双击打开系统设置")
+                        .accessibilityElement(children: .contain)
                     }
                     
                     // Main CTA
                     Button(action: {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                            self.showWelcomeScreen = false
+                            hasCompletedOnboarding = true
                         }
                     }) {
                         HStack {
-                            Text("我已授权，开始使用".localized)
+                            Text(hasPermission ? "我已授权，开始使用".localized : "继续".localized)
                             Image(systemName: "arrow.right")
+                                .accessibilityHidden(true)
                         }
                         .font(.headline.weight(.bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.blue)
                     .controlSize(.large)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .blue.opacity(0.3), radius: 8, x: 0, y: 4)
+                    .clipShape(.rect(cornerRadius: 12))
                     .keyboardShortcut(.defaultAction)
                 }
                 .padding(.horizontal, 40)
-                .padding(.bottom, 50)
+                .padding(.bottom, 40)
+                .frame(maxWidth: 600)
                 .offset(y: isAnimating ? 0 : 30)
                 .opacity(isAnimating ? 1 : 0)
+                }
+                .frame(maxWidth: .infinity)
             }
         }
-        .frame(minWidth: 500, maxWidth: .infinity, minHeight: 750, maxHeight: .infinity)
+        .frame(minWidth: 500, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
         .overlay(alignment: .topTrailing) {
             LanguageSwitcher(languageManager: languageManager)
                 .padding(20)

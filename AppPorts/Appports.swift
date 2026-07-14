@@ -35,8 +35,8 @@ struct AppMoverApp: App {
     /// 全局语言管理器
     @StateObject private var languageManager = LanguageManager.shared
 
-    /// 控制欢迎界面显示（首次启动为 true）
-    @State private var showWelcome = true
+    /// 记录首次引导是否已经完成
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showAboutSheet = false
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -49,8 +49,8 @@ struct AppMoverApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if showWelcome {
-                    WelcomeView(showWelcomeScreen: $showWelcome)
+                if !hasCompletedOnboarding {
+                    WelcomeView(hasCompletedOnboarding: $hasCompletedOnboarding)
                 } else {
                     ContentView()
                 }
