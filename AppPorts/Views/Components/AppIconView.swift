@@ -14,6 +14,12 @@ struct AppIconView: View {
 
     @State private var icon: NSImage? = nil
 
+    nonisolated(unsafe) private static let iconCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 100
+        return cache
+    }()
+
     var body: some View {
         Group {
             if let icon = icon {
@@ -28,28 +34,91 @@ struct AppIconView: View {
         .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
         .accessibilityHidden(true)
         .task(id: url) {
-            let loaded = Self.loadIcon(from: url)
-            icon = loaded
-            if loaded == nil {
-                AppLogger.shared.logContext(
-                    "AppIconView 图标加载失败",
-                    details: [
-                        ("url", url.path),
-                        ("exists", FileManager.default.fileExists(atPath: url.path) ? "YES" : "NO"),
-                        ("resolved", url.resolvingSymlinksInPath().path)
-                    ],
-                    level: "WARN"
-                )
+            let requestedURL = url
+            icon = nil
+
+            let loadingTask = Task.detached(priority: .utility) {
+                let result = Self.loadIconResult(from: requestedURL)
+
+                if result.icon == nil, !Task.isCancelled {
+                    AppLogger.shared.logContext(
+                        "AppIconView 图标加载失败",
+                        details: [
+                            ("url", requestedURL.path),
+                            ("exists", result.fileExists ? "YES" : "NO"),
+                            ("resolved", result.resolvedPath)
+                        ],
+                        level: "WARN"
+                    )
+                }
+
+                return result
             }
+            let result = await withTaskCancellationHandler {
+                await loadingTask.value
+            } onCancel: {
+                loadingTask.cancel()
+            }
+
+            guard !Task.isCancelled, url == requestedURL else { return }
+
+            icon = result.icon
         }
     }
 
-    private static func loadIcon(from appURL: URL) -> NSImage? {
+    private struct LoadResult: @unchecked Sendable {
+        let icon: NSImage?
+        let fileExists: Bool
+        let resolvedPath: String
+    }
+
+    nonisolated private static func loadIconResult(from appURL: URL) -> LoadResult {
+        let path = appURL.path
+        let fileExists = FileManager.default.fileExists(atPath: path)
+        let resolvedPath = appURL.resolvingSymlinksInPath().path
+        let modificationDate = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
+            ?? Date(timeIntervalSince1970: 0)
+        let cacheKey = "\(appURL.standardizedFileURL.path)|\(modificationDate.timeIntervalSince1970)" as NSString
+
+        if let cachedIcon = iconCache.object(forKey: cacheKey) {
+            return LoadResult(
+                icon: cachedIcon,
+                fileExists: fileExists,
+                resolvedPath: resolvedPath
+            )
+        }
+
+        guard !Task.isCancelled else {
+            return LoadResult(icon: nil, fileExists: fileExists, resolvedPath: resolvedPath)
+        }
+
+        let loadedIcon = loadIcon(
+            from: appURL,
+            fileExists: fileExists,
+            resolvedURL: URL(fileURLWithPath: resolvedPath)
+        )
+        if let loadedIcon {
+            iconCache.setObject(loadedIcon, forKey: cacheKey)
+        }
+
+        return LoadResult(
+            icon: loadedIcon,
+            fileExists: fileExists,
+            resolvedPath: resolvedPath
+        )
+    }
+
+    nonisolated private static func loadIcon(
+        from appURL: URL,
+        fileExists: Bool,
+        resolvedURL: URL
+    ) -> NSImage? {
         let fm = FileManager.default
         let path = appURL.path
 
         // 方式 1: NSWorkspace
-        if fm.fileExists(atPath: path) {
+        if fileExists {
+            guard !Task.isCancelled else { return nil }
             let icon = NSWorkspace.shared.icon(forFile: path)
             // 检查是否为 iOS app（有 Wrapper/WrappedBundle），尝试提取真实图标
             if let iosIcon = loadIOSAppIcon(from: appURL) {
@@ -59,13 +128,14 @@ struct AppIconView: View {
         }
 
         // 方式 2: 解析符号链接后重试
-        let resolved = appURL.resolvingSymlinksInPath()
-        if resolved.path != path, fm.fileExists(atPath: resolved.path) {
-            return NSWorkspace.shared.icon(forFile: resolved.path)
+        guard !Task.isCancelled else { return nil }
+        if resolvedURL.path != path, fm.fileExists(atPath: resolvedURL.path) {
+            return NSWorkspace.shared.icon(forFile: resolvedURL.path)
         }
 
         // 方式 3: 从 bundle .icns 直接读取
-        for tryPath in [path, resolved.path] {
+        for tryPath in [path, resolvedURL.path] {
+            guard !Task.isCancelled else { return nil }
             guard fm.fileExists(atPath: tryPath) else { continue }
             guard let plist = NSDictionary(contentsOfFile: tryPath + "/Contents/Info.plist"),
                   let iconFile = plist["CFBundleIconFile"] as? String else { continue }
@@ -82,7 +152,9 @@ struct AppIconView: View {
     }
 
     /// 从 iOS app 的 Wrapper/ 目录提取 AppIcon PNG
-    private static func loadIOSAppIcon(from appURL: URL) -> NSImage? {
+    nonisolated private static func loadIOSAppIcon(from appURL: URL) -> NSImage? {
+        guard !Task.isCancelled else { return nil }
+
         let fm = FileManager.default
         let wrapperDir: URL
         if fm.fileExists(atPath: appURL.appendingPathComponent("Wrapper").path) {

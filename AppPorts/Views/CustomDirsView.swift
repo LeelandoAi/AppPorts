@@ -168,14 +168,12 @@ struct CustomDirsView: View {
                         footerLabel(title: relinkButtonTitle, icon: "link")
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.blue)
                     .disabled(relinkablePairs.isEmpty)
 
                     Button(action: restoreSelected) {
                         footerLabel(title: restoreButtonTitle, icon: "arrow.turn.up.left")
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange.opacity(0.85))
+                    .buttonStyle(.bordered)
                     .disabled(restorablePairs.isEmpty)
                 }
                 .padding(.horizontal, 16)
@@ -509,7 +507,6 @@ private struct AddCustomDirSheet: View {
                     sheetFooterLabel(title: "迁移".localized, icon: "arrow.right")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.blue)
                 .disabled(localURL == nil || externalBaseURL == nil)
             }
         }

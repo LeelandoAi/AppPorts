@@ -70,13 +70,14 @@ struct AppRowView: View {
             if showMoveBackButton {
                 Button(action: { onMoveBack(app) }) {
                     Image(systemName: "arrow.uturn.backward")
-                    .foregroundColor(.blue)
+                    .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
                 .padding(6)
-                .background(Color.blue.opacity(0.1))
+                .background(Color.primary.opacity(0.08))
                 .clipShape(Circle())
                 .help("将应用迁移回本地".localized)
+                .accessibilityLabel("将应用迁移回本地".localized)
             }
         }
         .padding(.vertical, 10)
@@ -94,9 +95,9 @@ struct AppRowView: View {
         // Accessibility: Combine row into single element
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            Text(app.displayName) + Text(", ") +
-            Text(AppStatus.localized(app.status)) +
-            (app.size.map { Text(", \($0)") } ?? Text(""))
+            [app.displayName, AppStatus.localized(app.status), app.size]
+                .compactMap { $0 }
+                .joined(separator: ", ")
         )
         .contextMenu {
             Button("在 Finder 中显示".localized) {

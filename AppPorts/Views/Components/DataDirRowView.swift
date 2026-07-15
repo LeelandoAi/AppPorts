@@ -150,11 +150,11 @@ struct DataDirRowView: View {
                     Text("还原".localized)
                 }
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundStyle(.primary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(
-                    Capsule().fill(Color.orange)
+                    Capsule().fill(Color.primary.opacity(0.08))
                 )
             }
             .buttonStyle(.plain)
@@ -175,11 +175,11 @@ struct DataDirRowView: View {
                         Text("整理".localized)
                     }
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.primary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
-                        Capsule().fill(Color.mint)
+                        Capsule().fill(Color.primary.opacity(0.08))
                     )
                 }
                 .buttonStyle(.plain)
@@ -193,11 +193,11 @@ struct DataDirRowView: View {
                         Text("链接详情".localized)
                     }
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.primary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
-                        Capsule().fill(Color.teal)
+                        Capsule().fill(Color.primary.opacity(0.08))
                     )
                 }
                 .buttonStyle(.plain)
@@ -205,7 +205,7 @@ struct DataDirRowView: View {
             } else {
                 Image(systemName: "link.badge.questionmark")
                     .font(.system(size: 13))
-                    .foregroundColor(.teal.opacity(0.85))
+                    .foregroundStyle(.secondary)
                     .help("检测到已有符号链接，非 AppPorts 迁移结果".localized)
             }
         } else if item.status == "待接回" {
@@ -216,11 +216,11 @@ struct DataDirRowView: View {
                         Text("接回".localized)
                     }
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundStyle(.primary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
-                        Capsule().fill(Color.indigo)
+                        Capsule().fill(Color.primary.opacity(0.08))
                     )
                 }
                 .buttonStyle(.plain)
@@ -250,7 +250,7 @@ struct DataDirRowView: View {
         switch item.priority {
         case .critical:    return .red
         case .recommended: return .orange
-        case .optional:    return .blue
+        case .optional:    return .secondary
         }
     }
 
@@ -283,7 +283,7 @@ struct PriorityBadge: View {
         switch priority {
         case .critical:    return .red
         case .recommended: return .orange
-        case .optional:    return .blue
+        case .optional:    return .secondary
         }
     }
 }
@@ -321,9 +321,9 @@ struct DataDirStatusBadge: View {
     private var foregroundColor: Color {
         switch status {
         case "已链接": return .green
-        case "待规范": return .mint
-        case "现有软链": return .teal
-        case "待接回": return .indigo
+        case "待规范": return .orange
+        case "现有软链": return .orange
+        case "待接回": return .secondary
         case "本地":   return .secondary
         default:       return .gray
         }
@@ -332,9 +332,9 @@ struct DataDirStatusBadge: View {
     private var backgroundColor: Color {
         switch status {
         case "已链接": return .green.opacity(0.12)
-        case "待规范": return .mint.opacity(0.14)
-        case "现有软链": return .teal.opacity(0.14)
-        case "待接回": return .indigo.opacity(0.14)
+        case "待规范": return .orange.opacity(0.12)
+        case "现有软链": return .orange.opacity(0.12)
+        case "待接回": return Color.primary.opacity(0.05)
         case "本地":   return Color.primary.opacity(0.05)
         default:       return .gray.opacity(0.08)
         }

@@ -2738,6 +2738,88 @@
         }
       }
     },
+    "%@, %@" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "br" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "eo" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "hi" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "id" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "pt" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "th" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "tr" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, %2$@"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, %2$@"
+          }
+        }
+      }
+    },
+    "%@, %@, %@" : {
+      "localizations" : {
+        "ar" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "br" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "eo" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "hi" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "id" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "it" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "nl" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "pl" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "pt" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "th" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "tr" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "vi" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@" } },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@, %2$@, %3$@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, %2$@, %3$@"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, %2$@, %3$@"
+          }
+        }
+      }
+    },
     "%@：权限不足，无法删除或替换本地副本。该应用可能来自 App Store 或归属系统（root）。建议在访达中手动迁移后，再用 AppPorts 创建链接。" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -29579,6 +29661,7 @@
       }
     },
     "双击打开系统设置" : {
+      "extractionState" : "manual",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
@@ -43136,6 +43219,143 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "應詠需偠讀寫 /Applications 目錄才螚工莋。請╪繫統設寘㊥開啟。"
+          }
+        }
+      }
+    },
+    "开始使用" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ابدأ الاستخدام"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠎⠞⠁⠗⠞ ⠠⠥⠎⠊⠝⠛"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loslegen"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get Started"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Komenci"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Comenzar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Commencer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "शुरू करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mulai"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Inizia"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使い始める"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "시작하기"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aan de slag"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rozpocznij"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Começar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Начать"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "เริ่มใช้งาน"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kullanmaya Başla"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bắt đầu"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始使用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始使用"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始駛詠"
           }
         }
       }
@@ -74372,6 +74592,143 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "稍後"
+          }
+        }
+      }
+    },
+    "稍后设置并继续" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الإعداد لاحقًا والمتابعة"
+          }
+        },
+        "br" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "⠠⠎⠑⠞ ⠠⠥⠏ ⠠⠇⠁⠞⠑⠗ ⠁⠝⠙ ⠠⠉⠕⠝⠞⠊⠝⠥⠑"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Später einrichten und fortfahren"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set Up Later and Continue"
+          }
+        },
+        "eo" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agordi Poste kaj Daŭrigi"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configurar más tarde y continuar"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configurer plus tard et continuer"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "बाद में सेट अप करें और जारी रखें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Atur Nanti dan Lanjutkan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configura più tardi e continua"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "後で設定して続ける"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "나중에 설정하고 계속"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Later instellen en doorgaan"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skonfiguruj później i kontynuuj"
+          }
+        },
+        "pt" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Configurar depois e continuar"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настроить позже и продолжить"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ตั้งค่าภายหลังและดำเนินการต่อ"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daha Sonra Ayarla ve Devam Et"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Thiết lập sau và tiếp tục"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稍后设置并继续"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稍後設定並繼續"
+          }
+        },
+        "zh-martian" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "稍後設寘并繼續"
           }
         }
       }

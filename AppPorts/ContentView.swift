@@ -8,6 +8,29 @@
 import SwiftUI
 import AppKit
 
+private enum MainTab: String, CaseIterable, Hashable {
+    case apps, dataDirs, customDirs
+}
+
+private enum ApplicationSortOption: String, CaseIterable, Hashable {
+    case name, size
+}
+
+private struct DataDirectoriesUIState {
+    var selectedTab: DataDirsView.DataTab = .toolDirs
+    var selectedAppID: AppItem.ID?
+    var isToolDirsScanning = false
+    var isAppDirsScanning = false
+    var refreshTrigger = 0
+}
+
+private struct UpdatePresentationState {
+    var isPresented = false
+    var githubURL: URL?
+    var chinaDownloadURL: URL?
+    var releaseBody = ""
+}
+
 struct AppSearchFocusActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
@@ -78,6 +101,199 @@ private struct ToolbarSearchField: NSViewRepresentable {
                 text.wrappedValue = searchField.stringValue
             }
         }
+    }
+}
+
+private struct MainNavigationControl: View {
+    @Binding var selection: MainTab
+
+    private var accessibilityLabel: String {
+        ["应用".localized, "数据目录".localized, "目录迁移".localized]
+            .joined(separator: " / ")
+    }
+
+    var body: some View {
+        Picker(accessibilityLabel, selection: $selection) {
+            Text("应用".localized).tag(MainTab.apps)
+            Text("数据目录".localized).tag(MainTab.dataDirs)
+            Text("目录迁移".localized).tag(MainTab.customDirs)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 330)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct DataDirectoryNavigationControl: View {
+    @Binding var selection: DataDirsView.DataTab
+
+    private var accessibilityLabel: String {
+        ["工具目录".localized, "应用数据".localized]
+            .joined(separator: " / ")
+    }
+
+    var body: some View {
+        Picker(accessibilityLabel, selection: $selection) {
+            Text("工具目录".localized).tag(DataDirsView.DataTab.toolDirs)
+            Text("应用数据".localized).tag(DataDirsView.DataTab.appDirs)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 170)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct AppsWorkspaceToolbar: ToolbarContent {
+    @Binding var searchText: String
+    @Binding var sortOption: ApplicationSortOption
+    let isVisible: Bool
+    let focusRequest: Int
+    let onRefresh: () -> Void
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .automatic) {
+            if isVisible {
+                ToolbarSearchField(
+                    text: $searchText,
+                    prompt: "搜索应用 (本地 / 外部)...".localized,
+                    focusRequest: focusRequest
+                )
+                .frame(width: 220)
+                .accessibilityLabel("搜索应用 (本地 / 外部)...".localized)
+            }
+        }
+
+        ToolbarItem(placement: .automatic) {
+            if isVisible {
+                Menu {
+                    Button {
+                        sortOption = .name
+                    } label: {
+                        Label("按名称".localized, systemImage: sortOption == .name ? "checkmark" : "textformat")
+                    }
+
+                    Button {
+                        sortOption = .size
+                    } label: {
+                        Label("按大小".localized, systemImage: sortOption == .size ? "checkmark" : "internaldrive")
+                    }
+                } label: {
+                    Label("排序".localized, systemImage: "arrow.up.arrow.down")
+                }
+                .help("排序方式".localized)
+            }
+        }
+
+        ToolbarItem(placement: .automatic) {
+            if isVisible {
+                Button(action: onRefresh) {
+                    Label("刷新列表".localized, systemImage: "arrow.clockwise")
+                }
+                .help("刷新列表".localized)
+                .accessibilityLabel("刷新列表".localized)
+            }
+        }
+    }
+}
+
+private struct DataDirectoriesToolbar: ToolbarContent {
+    @Binding var autoResignEnabled: Bool
+    let selectedApp: AppItem?
+    let isVisible: Bool
+    let isAppDirsTab: Bool
+    let isScanning: Bool
+    let onRestoreSignature: (AppItem) -> Void
+    let onRefresh: () -> Void
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .automatic) {
+            if isVisible {
+                Toggle(isOn: $autoResignEnabled) {
+                    Label(
+                        "迁移后重签名".localized,
+                        systemImage: autoResignEnabled ? "seal.fill" : "seal"
+                    )
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("数据迁移完成后，自动对关联应用执行 Ad-hoc 重签名，避免 Finder 提示「已损坏」".localized)
+            }
+        }
+
+        ToolbarItem(placement: .automatic) {
+            if isVisible {
+                HelpButton(content: """
+                **什么是重签名？**
+
+                数据目录迁移到外部存储后，macOS 可能认为应用已被修改，在 Finder 中提示「已损坏」或「无法打开」。
+
+                开启此选项后，AppPorts 会在数据迁移完成后自动对关联应用执行 **Ad-hoc 自签名**，绕过此限制。
+
+                **可能的影响：**
+                • 应用原有的 Developer ID 签名将被替换
+                • 部分依赖签名验证的功能（如 Keychain 访问）可能受限
+                • 应用更新后可能需要重新迁移数据
+
+                如需恢复原始签名，可在应用列表中右键选择「恢复原始签名」。
+                """.localized)
+            }
+        }
+
+        ToolbarItem(placement: .automatic) {
+            if isVisible, isAppDirsTab, let selectedApp, selectedApp.isResigned {
+                Button(action: { onRestoreSignature(selectedApp) }) {
+                    Label("恢复原始签名".localized, systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("恢复选中应用的原始代码签名".localized)
+            }
+        }
+
+        ToolbarItem(placement: .automatic) {
+            if isVisible {
+                Button(action: onRefresh) {
+                    Label("刷新列表".localized, systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
+                        .rotationEffect(.degrees(isScanning ? 360 : 0))
+                        .animation(
+                            isScanning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default,
+                            value: isScanning
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(isScanning)
+                .help("刷新列表".localized)
+            }
+        }
+    }
+}
+
+private struct SettingsToolbarControl: View {
+    var body: some View {
+        Group {
+            if #available(macOS 14.0, *) {
+                SettingsLink {
+                    Label("设置".localized, systemImage: "gearshape")
+                        .labelStyle(.iconOnly)
+                }
+            } else {
+                Button(action: openLegacySettings) {
+                    Label("设置".localized, systemImage: "gearshape")
+                        .labelStyle(.iconOnly)
+                }
+            }
+        }
+        .help("设置".localized)
+        .accessibilityLabel("设置".localized)
+    }
+
+    private func openLegacySettings() {
+        if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+            return
+        }
+        NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
     }
 }
 
@@ -287,10 +503,7 @@ struct ContentView: View {
     @State private var alertTitle = ""
     @State private var alertMessage = ""
     
-    @State private var showUpdateAlert = false
-    @State private var updateGitHubURL: URL?
-    @State private var updateChinaDownloadURL: URL?
-    @State private var updateReleaseBody = ""
+    @State private var updatePresentation = UpdatePresentationState()
     
     // App Store 应用迁移确认
     @State private var showAppStoreConfirm = false
@@ -335,19 +548,11 @@ struct ContentView: View {
     // Track previous external drive URL for logging
     @State private var previousExternalDriveURL: URL?
 
-    enum SortOption: String, CaseIterable, Hashable {
-        case name, size
-    }
-    @State private var sortOption: SortOption = .name
+    @State private var sortOption: ApplicationSortOption = .name
 
     // MARK: - Tab
-    enum MainTab: String, CaseIterable, Hashable { case apps, dataDirs, customDirs }
     @State private var mainTab: MainTab = .apps
-    @State private var selectedDataDirsTab: DataDirsView.DataTab = .toolDirs
-    @State private var selectedDataDirsAppID: AppItem.ID? = nil
-    @State private var isToolDirsScanning = false
-    @State private var isAppDirsScanning = false
-    @State private var dataDirsRefreshTrigger = 0
+    @State private var dataDirectoriesUI = DataDirectoriesUIState()
     @State private var searchFocusRequest = 0
     @AppStorage("autoResignEnabled") private var autoResignEnabled = false
 
@@ -359,12 +564,12 @@ struct ContentView: View {
                 DataDirsView(
                     externalDriveURL: externalDriveURL,
                     localApps: localApps,
-                    selectedTab: $selectedDataDirsTab,
-                    selectedAppID: $selectedDataDirsAppID,
-                    isToolDirsScanning: $isToolDirsScanning,
-                    isAppDirsScanning: $isAppDirsScanning,
+                    selectedTab: $dataDirectoriesUI.selectedTab,
+                    selectedAppID: $dataDirectoriesUI.selectedAppID,
+                    isToolDirsScanning: $dataDirectoriesUI.isToolDirsScanning,
+                    isAppDirsScanning: $dataDirectoriesUI.isAppDirsScanning,
                     autoResignEnabled: $autoResignEnabled,
-                    refreshTrigger: dataDirsRefreshTrigger,
+                    refreshTrigger: dataDirectoriesUI.refreshTrigger,
                     onSelectExternalDrive: openPanelForExternalDrive,
                     onResignApp: performSingleResign,
                     onRestoreSignature: performRestoreSignature,
@@ -504,7 +709,6 @@ struct ContentView: View {
                             .frame(height: 28)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.blue)
                         .disabled(!canLinkIn)
 
                         Button(action: performBatchMoveBack) {
@@ -518,8 +722,7 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity)
                             .frame(height: 28)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange.opacity(0.85))
+                        .buttonStyle(.bordered)
                         .disabled(selectedExternalApps.isEmpty)
                     }
                     .padding(.horizontal, 16)
@@ -582,10 +785,10 @@ struct ContentView: View {
                         ]
                     )
                     await MainActor.run {
-                        self.updateReleaseBody = update.releaseNotesMarkdown
-                        self.updateGitHubURL = update.githubURL
-                        self.updateChinaDownloadURL = update.chinaDownloadURL
-                        self.showUpdateAlert = true
+                        self.updatePresentation.releaseBody = update.releaseNotesMarkdown
+                        self.updatePresentation.githubURL = update.githubURL
+                        self.updatePresentation.chinaDownloadURL = update.chinaDownloadURL
+                        self.updatePresentation.isPresented = true
                     }
                 }
             }
@@ -623,27 +826,27 @@ struct ContentView: View {
         } message: {
             Text(LocalizedStringKey(alertMessage.localized))
         }
-        .sheet(isPresented: $showUpdateAlert) {
+        .sheet(isPresented: $updatePresentation.isPresented) {
             VStack(alignment: .leading, spacing: 16) {
                 Text("发现新版本".localized)
                     .font(.headline)
-                MarkdownTextView(markdown: updateReleaseBody)
+                MarkdownTextView(markdown: updatePresentation.releaseBody)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
                 HStack {
                     Spacer()
                     Button("GitHub".localized) {
-                        showUpdateAlert = false
-                        if let url = updateGitHubURL { NSWorkspace.shared.open(url) }
+                        updatePresentation.isPresented = false
+                        if let url = updatePresentation.githubURL { NSWorkspace.shared.open(url) }
                     }
-                    .disabled(updateGitHubURL == nil)
+                    .disabled(updatePresentation.githubURL == nil)
                     .keyboardShortcut(.defaultAction)
                     Button("国内下载".localized) {
-                        showUpdateAlert = false
-                        if let url = updateChinaDownloadURL { NSWorkspace.shared.open(url) }
+                        updatePresentation.isPresented = false
+                        if let url = updatePresentation.chinaDownloadURL { NSWorkspace.shared.open(url) }
                     }
                     Button("以后再说".localized) {
-                        showUpdateAlert = false
+                        updatePresentation.isPresented = false
                     }
                     .keyboardShortcut(.cancelAction)
                 }
@@ -766,122 +969,43 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var mainToolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            mainNavigationControl
+            MainNavigationControl(selection: $mainTab)
         }
 
         ToolbarItem(placement: .automatic) {
             secondaryToolbarControl
         }
 
-        ToolbarItem(placement: .primaryAction) {
-            leadingPrimaryToolbarControl
-        }
+        DataDirectoriesToolbar(
+            autoResignEnabled: $autoResignEnabled,
+            selectedApp: selectedDataDirsApp,
+            isVisible: mainTab == .dataDirs,
+            isAppDirsTab: dataDirectoriesUI.selectedTab == .appDirs,
+            isScanning: isDataDirsScanning,
+            onRestoreSignature: performRestoreSignature,
+            onRefresh: { dataDirectoriesUI.refreshTrigger += 1 }
+        )
+
+        AppsWorkspaceToolbar(
+            searchText: $searchText,
+            sortOption: $sortOption,
+            isVisible: mainTab == .apps,
+            focusRequest: searchFocusRequest,
+            onRefresh: refreshApplications
+        )
 
         ToolbarItem(placement: .primaryAction) {
-            sortToolbarControl
+            SettingsToolbarControl()
         }
-
-        ToolbarItem(placement: .primaryAction) {
-            refreshToolbarControl
-        }
-    }
-
-    private var mainNavigationControl: some View {
-        Picker(mainNavigationLabel, selection: $mainTab) {
-            Text("应用".localized).tag(MainTab.apps)
-            Text("数据目录".localized).tag(MainTab.dataDirs)
-            Text("目录迁移".localized).tag(MainTab.customDirs)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(width: 330)
-        .accessibilityLabel(mainNavigationLabel)
-    }
-
-    private var mainNavigationLabel: String {
-        ["应用".localized, "数据目录".localized, "目录迁移".localized]
-            .joined(separator: " / ")
     }
 
     @ViewBuilder
     private var secondaryToolbarControl: some View {
         if mainTab == .dataDirs {
-            Picker(dataDirectoryNavigationLabel, selection: $selectedDataDirsTab) {
-                Text("工具目录".localized).tag(DataDirsView.DataTab.toolDirs)
-                Text("应用数据".localized).tag(DataDirsView.DataTab.appDirs)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 170)
-            .accessibilityLabel(dataDirectoryNavigationLabel)
+            DataDirectoryNavigationControl(selection: $dataDirectoriesUI.selectedTab)
         }
     }
 
-    private var dataDirectoryNavigationLabel: String {
-        ["工具目录".localized, "应用数据".localized]
-            .joined(separator: " / ")
-    }
-
-    @ViewBuilder
-    private var leadingPrimaryToolbarControl: some View {
-        if mainTab == .dataDirs {
-            dataDirsToolbarControls
-        } else if mainTab == .apps {
-            applicationSearchField
-        }
-    }
-
-    @ViewBuilder
-    private var sortToolbarControl: some View {
-        if mainTab == .apps {
-            applicationSortMenu
-        }
-    }
-
-    @ViewBuilder
-    private var refreshToolbarControl: some View {
-        if mainTab == .apps {
-            applicationRefreshButton
-        }
-    }
-
-    private var applicationSearchField: some View {
-        ToolbarSearchField(
-            text: $searchText,
-            prompt: "搜索应用 (本地 / 外部)...".localized,
-            focusRequest: searchFocusRequest
-        )
-        .frame(width: 220)
-        .accessibilityLabel("搜索应用 (本地 / 外部)...".localized)
-    }
-
-    private var applicationSortMenu: some View {
-        Menu {
-            Button {
-                sortOption = .name
-            } label: {
-                Label("按名称".localized, systemImage: sortOption == .name ? "checkmark" : "textformat")
-            }
-
-            Button {
-                sortOption = .size
-            } label: {
-                Label("按大小".localized, systemImage: sortOption == .size ? "checkmark" : "internaldrive")
-            }
-        } label: {
-            Label("排序".localized, systemImage: "arrow.up.arrow.down")
-        }
-        .help("排序方式".localized)
-    }
-
-    private var applicationRefreshButton: some View {
-        Button(action: refreshApplications) {
-            Label("刷新列表".localized, systemImage: "arrow.clockwise")
-        }
-        .help("刷新列表".localized)
-        .accessibilityLabel("刷新列表".localized)
-    }
-    
     // MARK: - 过滤逻辑
     
     var filteredLocalApps: [AppItem] {
@@ -1033,73 +1157,17 @@ struct ContentView: View {
         }
     }
 
-    private var dataDirsToolbarControls: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: autoResignEnabled ? "seal.fill" : "seal")
-                    .font(.system(size: 12))
-                    .foregroundColor(autoResignEnabled ? .teal : .secondary)
-
-                Text("迁移后重签名".localized)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary)
-
-                Toggle("迁移后重签名".localized, isOn: $autoResignEnabled)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-
-                HelpButton(content: """
-                **什么是重签名？**
-
-                数据目录迁移到外部存储后，macOS 可能认为应用已被修改，在 Finder 中提示「已损坏」或「无法打开」。
-
-                开启此选项后，AppPorts 会在数据迁移完成后自动对关联应用执行 **Ad-hoc 自签名**，绕过此限制。
-
-                **可能的影响：**
-                • 应用原有的 Developer ID 签名将被替换
-                • 部分依赖签名验证的功能（如 Keychain 访问）可能受限
-                • 应用更新后可能需要重新迁移数据
-
-                如需恢复原始签名，可在应用列表中右键选择「恢复原始签名」。
-                """.localized)
-            }
-            .help("数据迁移完成后，自动对关联应用执行 Ad-hoc 重签名，避免 Finder 提示「已损坏」".localized)
-
-            if selectedDataDirsTab == .appDirs, let app = selectedDataDirsApp, app.isResigned {
-                Button(action: { performRestoreSignature(app: app) }) {
-                    Label("恢复原始签名".localized, systemImage: "arrow.counterclockwise")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.borderless)
-                .foregroundColor(.teal)
-                .help("恢复选中应用的原始代码签名".localized)
-            }
-
-            Button(action: { dataDirsRefreshTrigger += 1 }) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 14, weight: .medium))
-                    .rotationEffect(.degrees(isDataDirsScanning ? 360 : 0))
-                    .animation(isDataDirsScanning ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: isDataDirsScanning)
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .disabled(isDataDirsScanning)
-            .help("刷新列表".localized)
-        }
-    }
-
     private var selectedDataDirsApp: AppItem? {
-        guard let selectedDataDirsAppID else { return nil }
-        return localApps.first { $0.id == selectedDataDirsAppID && !$0.isFolder }
+        guard let selectedAppID = dataDirectoriesUI.selectedAppID else { return nil }
+        return localApps.first { $0.id == selectedAppID && !$0.isFolder }
     }
 
     private var isDataDirsScanning: Bool {
-        switch selectedDataDirsTab {
+        switch dataDirectoriesUI.selectedTab {
         case .toolDirs:
-            return isToolDirsScanning
+            return dataDirectoriesUI.isToolDirsScanning
         case .appDirs:
-            return isAppDirsScanning
+            return dataDirectoriesUI.isAppDirsScanning
         }
     }
 

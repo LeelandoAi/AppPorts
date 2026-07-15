@@ -117,7 +117,7 @@ struct WelcomeView: View {
                 // MARK: - Permission & Action
                 VStack(spacing: 24) {
                     // Permission Card
-                    if !hasPermission {
+                    if !hasAppManagementPermission {
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: "lock.shield.fill")
                                 .font(.title2)
@@ -126,18 +126,18 @@ struct WelcomeView: View {
                                 .accessibilityHidden(true)
                             
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("需要“完全磁盘访问权限”".localized)
+                                Text("需要 App 管理权限".localized)
                                     .font(.headline)
                                     .foregroundColor(.primary)
                                 
-                                Text("应用需要读写 /Applications 目录才能工作。请在系统设置中开启。".localized)
+                                Text("AppPorts 需要「App 管理」权限才能迁移应用数据。请在系统设置中勾选 AppPorts，然后重启应用。".localized)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                                 
-                                Button(action: openFullDiskAccessSettings) {
+                                Button(action: openAppManagementSettings) {
                                     HStack(spacing: 4) {
-                                        Text("去设置授予权限".localized).fontWeight(.semibold)
+                                        Text("打开系统设置".localized).fontWeight(.semibold)
                                         Image(systemName: "arrow.up.right")
                                             .font(.system(size: 10))
                                     }
@@ -166,7 +166,7 @@ struct WelcomeView: View {
                         }
                     }) {
                         HStack {
-                            Text(hasPermission ? "我已授权，开始使用".localized : "继续".localized)
+                            Text(hasAppManagementPermission ? "开始使用".localized : "稍后设置并继续".localized)
                             Image(systemName: "arrow.right")
                                 .accessibilityHidden(true)
                         }
@@ -199,31 +199,30 @@ struct WelcomeView: View {
                 isAnimating = true
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            checkPermission()
+        }
     }
     
-    @State private var hasPermission = false
+    @State private var hasAppManagementPermission = false
     
     func checkPermission() {
-        // Simple check: try to write a temp file to /Applications or read contents
-        // Or check if we can read a sensitive location.
-        // Reading /Applications usually requires permission for sandboxed apps, but we are not sandboxed?
-        // Let's try to contentsOfDirectory at /Applications.
-        // Actually, just checking if we can write to /Applications is the key for this app.
-        // But write checking is dangerous/intrusive.
-        // Let's rely on the FileManager check used in ContentView: checkApplicationsFolderWritePermission
-        // Simplified check here:
-        let testUrl = URL(fileURLWithPath: "/Applications")
-        if FileManager.default.isWritableFile(atPath: testUrl.path) {
-             hasPermission = true
-        } else {
-             hasPermission = false
+        let testFile = URL(fileURLWithPath: "/Applications/.appports-permission-test")
+        do {
+            try Data().write(to: testFile, options: .atomic)
+            try FileManager.default.removeItem(at: testFile)
+            hasAppManagementPermission = true
+        } catch {
+            hasAppManagementPermission = false
         }
     }
     
-    func openFullDiskAccessSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-            NSWorkspace.shared.open(url)
-        }
+    func openAppManagementSettings() {
+        let venturaURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AppManagement")
+        let legacyURL = URL(string: "x-apple.systempreferences:com.apple.preference.security")
+
+        if #available(macOS 13.0, *), let url = venturaURL, NSWorkspace.shared.open(url) { return }
+        if let url = legacyURL { NSWorkspace.shared.open(url) }
     }
 }
 

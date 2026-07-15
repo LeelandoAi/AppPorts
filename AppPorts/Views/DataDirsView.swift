@@ -20,6 +20,35 @@ struct DataDirGroup {
     }
 }
 
+/// 应用数据页左侧的应用选择区域。
+///
+/// 独立类型为 SwiftUI 提供稳定的 diff 边界，同时让 macOS 13 的原生侧边栏与
+/// macOS 12 的分栏回退复用完全相同的内容和交互语义。
+private struct ApplicationPane<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+    }
+}
+
+/// 应用数据页右侧的数据目录浏览区域。
+private struct DataDirectoryBrowser<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+    }
+}
+
 // MARK: - 数据目录主视图
 
 /// 数据目录管理视图（主界面 Tab 三）
@@ -65,12 +94,7 @@ struct DataDirsView: View {
     @State private var dotFolderItems: [DataDirItem] = []
     @State private var libraryItems:   [DataDirItem] = []
 
-    @State private var showAppDataFilters = false
-    @State private var selectedPriorityFilters: Set<DataDirPriority> = []
-    @State private var selectedStatusFilters: Set<String> = []
-    @State private var selectedTypeFilters: Set<DataDirType> = []
-    @State private var selectedAppDataSortMode: AppDataSortMode = .defaultOrder
-    @State private var selectedAppSortMode: AppSortMode = .size
+    @State private var filters = FilterState()
 
     // 进度弹窗
     @State private var showProgress = false
@@ -152,6 +176,15 @@ struct DataDirsView: View {
                 return "按首字母".localized
             }
         }
+    }
+
+    private struct FilterState {
+        var showsPopover = false
+        var priorities: Set<DataDirPriority> = []
+        var statuses: Set<String> = []
+        var types: Set<DataDirType> = []
+        var appDataSortMode: AppDataSortMode = .defaultOrder
+        var appSortMode: AppSortMode = .size
     }
 
     private let appDataStatusOrder = ["本地", "已链接", "待规范", "现有软链", "待接回", "未找到"]
@@ -340,91 +373,129 @@ struct DataDirsView: View {
 
     // MARK: - 应用数据 Tab
 
+    @ViewBuilder
     private var appDirsContent: some View {
-        HSplitView {
-            // 左侧：应用选择列表
-            VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                    TextField("搜索应用...".localized, text: $appSearchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                    if !appSearchText.isEmpty {
-                        Button(action: { appSearchText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if !localApps.isEmpty {
-                        let count = localApps.filter { !$0.isFolder }.count
-                        Text("\(count)")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.primary.opacity(0.06))
-                            .clipShape(Capsule())
-                    }
+        if #available(macOS 13.0, *) {
+            NavigationSplitView {
+                ApplicationPane {
+                    applicationPaneContent
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(.ultraThinMaterial)
-                Divider()
+                    .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 280)
+            } detail: {
+                DataDirectoryBrowser {
+                    dataDirectoryBrowserContent
+                }
+            }
+            .navigationSplitViewStyle(.balanced)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            HSplitView {
+                ApplicationPane {
+                    applicationPaneContent
+                }
+                    .frame(minWidth: 200, maxWidth: 280)
 
-                if localApps.isEmpty {
-                    ContentView.EmptyStateView(icon: "app.dashed", text: "无本地应用".localized)
-                } else {
-                    let filteredApps = localApps.filter { app in
-                        !app.isFolder && (appSearchText.isEmpty || app.displayName.localizedCaseInsensitiveContains(appSearchText) || app.name.localizedCaseInsensitiveContains(appSearchText))
+                DataDirectoryBrowser {
+                    dataDirectoryBrowserContent
+                }
+                    .frame(minWidth: 340, maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    // 左侧：应用选择列表。macOS 13+ 作为 NavigationSplitView sidebar，macOS 12 作为 HSplitView 左栏。
+    private var applicationPaneContent: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                TextField("搜索应用...".localized, text: $appSearchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                if !appSearchText.isEmpty {
+                    Button(action: { appSearchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
                     }
-                    let sortedApps: [AppItem] = {
-                        switch selectedAppSortMode {
-                        case .size:
-                            return filteredApps.sorted { lhs, rhs in
-                                if lhs.sizeBytes != rhs.sizeBytes { return lhs.sizeBytes > rhs.sizeBytes }
-                                return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
-                            }
-                        case .alphabetical:
-                            return filteredApps.sorted {
-                                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-                            }
-                        }
-                    }()
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("清除筛选".localized)
+                    .help("清除筛选".localized)
+                }
+                if !localApps.isEmpty {
+                    let count = localApps.filter { !$0.isFolder }.count
+                    let filteredCount = sortedApplicationCount(localApps: localApps)
+                    Text(appSearchText.isEmpty ? "\(count)" : "\(filteredCount)/\(count)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.06))
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            Divider()
 
-                    // 排序切换按钮
-                    HStack(spacing: 6) {
-                        Menu {
-                            ForEach(AppSortMode.allCases, id: \.self) { mode in
-                                Button(action: { selectedAppSortMode = mode }) {
-                                    HStack {
-                                        Text(mode.localizedTitle)
-                                        Spacer()
-                                        if selectedAppSortMode == mode {
-                                            Image(systemName: "checkmark")
-                                        }
+            if localApps.isEmpty {
+                ContentView.EmptyStateView(icon: "app.dashed", text: "无本地应用".localized)
+            } else {
+                let filteredApps = localApps.filter { app in
+                    !app.isFolder && (appSearchText.isEmpty || app.displayName.localizedCaseInsensitiveContains(appSearchText) || app.name.localizedCaseInsensitiveContains(appSearchText))
+                }
+                let sortedApps: [AppItem] = {
+                    switch filters.appSortMode {
+                    case .size:
+                        return filteredApps.sorted { lhs, rhs in
+                            if lhs.sizeBytes != rhs.sizeBytes { return lhs.sizeBytes > rhs.sizeBytes }
+                            return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+                        }
+                    case .alphabetical:
+                        return filteredApps.sorted {
+                            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                        }
+                    }
+                }()
+
+                HStack(spacing: 6) {
+                    Menu {
+                        ForEach(AppSortMode.allCases, id: \.self) { mode in
+                            Button(action: { filters.appSortMode = mode }) {
+                                HStack {
+                                    Text(mode.localizedTitle)
+                                    Spacer()
+                                    if filters.appSortMode == mode {
+                                        Image(systemName: "checkmark")
                                     }
                                 }
                             }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.up.arrow.down")
-                                    .font(.system(size: 10))
-                                Text(selectedAppSortMode.localizedTitle)
-                                    .font(.system(size: 11))
-                            }
-                            .foregroundColor(.secondary)
                         }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        Spacer()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.arrow.down")
+                                .font(.system(size: 10))
+                            Text(filters.appSortMode.localizedTitle)
+                                .font(.system(size: 11))
+                        }
+                        .foregroundColor(.secondary)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
 
+                if sortedApps.isEmpty {
+                    ContentView.EmptyStateView(
+                        icon: "magnifyingglass",
+                        text: "搜索应用...".localized + " — 0"
+                    )
+                } else {
                     List(sortedApps, selection: $selectedAppID) { app in
                         AppListRow(app: app, isSelected: selectedAppID == app.id)
                             .tag(app.id)
@@ -433,76 +504,83 @@ struct DataDirsView: View {
                     .listStyle(.plain)
                 }
             }
-            .frame(minWidth: 200, maxWidth: 280)
+        }
+    }
 
-            // 右侧：关联数据目录
-            VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 12) {
-                        if let app = selectedApp {
-                            Text(String(format: "%@ 的数据目录".localized, app.name.replacingOccurrences(of: ".app", with: "")))
-                        } else {
-                            Text("请从左侧选择应用".localized)
-                        }
-                        Spacer()
-                        if selectedApp != nil {
-                            appDataSortMenu
-                            appDataFilterButton
-                        }
-                    }
+    private func sortedApplicationCount(localApps: [AppItem]) -> Int {
+        localApps.filter {
+            !$0.isFolder &&
+            (appSearchText.isEmpty ||
+             $0.displayName.localizedCaseInsensitiveContains(appSearchText) ||
+             $0.name.localizedCaseInsensitiveContains(appSearchText))
+        }.count
+    }
 
-                    if selectedApp != nil && (!libraryItems.isEmpty || hasActiveAppDataFilters) {
-                        appDataFilterSummary
-                    }
-                }
-                .font(.headline)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(.ultraThinMaterial)
-                Divider()
-
-                // 外部存储路径提示
-                if externalDriveURL == nil { externalDriveWarning }
-
-                // 统计栏
-                if !libraryItems.isEmpty {
-                    statsBar(items: filteredLibraryItems)
-                }
-
-                ZStack {
-                    Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
-
-                    if selectedApp == nil {
-                        ContentView.EmptyStateView(icon: "arrow.left.circle", text: "从左侧选择一个应用".localized)
-                    } else if isAppDirsScanning && libraryItems.isEmpty {
-                        loadingView
-                    } else if libraryItems.isEmpty {
-                        ContentView.EmptyStateView(icon: "folder.badge.questionmark", text: "未找到关联数据目录".localized)
-                    } else if sortedFilteredLibraryItems.isEmpty {
-                        ContentView.EmptyStateView(icon: "line.3.horizontal.decrease.circle", text: "没有匹配当前筛选条件的数据目录".localized)
+    // 右侧：关联数据目录浏览器。两个系统版本共用同一套选择、扫描和迁移状态。
+    private var dataDirectoryBrowserContent: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    if let app = selectedApp {
+                        Text(String(format: "%@ 的数据目录".localized, app.name.replacingOccurrences(of: ".app", with: "")))
                     } else {
-                        ScrollView {
-                            LazyVStack(spacing: 10) {
-                                ForEach(groupedLibraryItems, id: \.type) { group in
-                                    DataDirGroupCard(
-                                        group: group,
-                                        selectedItemID: selectedAppItemID,
-                                        onSelect: { selectedAppItemID = $0 },
-                                        onMigrate: askMigrate,
-                                        onRestore: askRestore,
-                                        onManageExistingLink: askManageExistingLink,
-                                        onNormalizeManagedLink: askNormalizeManagedLink,
-                                        onRelinkExternalData: askRelinkExternalData
-                                    )
-                                }
+                        Text("请从左侧选择应用".localized)
+                    }
+                    Spacer()
+                    if selectedApp != nil {
+                        appDataSortMenu
+                        appDataFilterButton
+                    }
+                }
+
+                if selectedApp != nil && (!libraryItems.isEmpty || hasActiveAppDataFilters) {
+                    appDataFilterSummary
+                }
+            }
+            .font(.headline)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            Divider()
+
+            if externalDriveURL == nil { externalDriveWarning }
+
+            if !libraryItems.isEmpty {
+                statsBar(items: filteredLibraryItems)
+            }
+
+            ZStack {
+                Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
+
+                if selectedApp == nil {
+                    ContentView.EmptyStateView(icon: "arrow.left.circle", text: "从左侧选择一个应用".localized)
+                } else if isAppDirsScanning && libraryItems.isEmpty {
+                    loadingView
+                } else if libraryItems.isEmpty {
+                    ContentView.EmptyStateView(icon: "folder.badge.questionmark", text: "未找到关联数据目录".localized)
+                } else if sortedFilteredLibraryItems.isEmpty {
+                    ContentView.EmptyStateView(icon: "line.3.horizontal.decrease.circle", text: "没有匹配当前筛选条件的数据目录".localized)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(groupedLibraryItems, id: \.type) { group in
+                                DataDirGroupCard(
+                                    group: group,
+                                    selectedItemID: selectedAppItemID,
+                                    onSelect: { selectedAppItemID = $0 },
+                                    onMigrate: askMigrate,
+                                    onRestore: askRestore,
+                                    onManageExistingLink: askManageExistingLink,
+                                    onNormalizeManagedLink: askNormalizeManagedLink,
+                                    onRelinkExternalData: askRelinkExternalData
+                                )
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
                     }
                 }
             }
-            .frame(minWidth: 340, maxWidth: .infinity)
         }
     }
 
@@ -525,7 +603,7 @@ struct DataDirsView: View {
     }
 
     private var appDataFilterButton: some View {
-        Button(action: { showAppDataFilters.toggle() }) {
+        Button(action: { filters.showsPopover.toggle() }) {
             HStack(spacing: 6) {
                 Image(systemName: hasActiveAppDataFilters
                       ? "line.3.horizontal.decrease.circle.fill"
@@ -543,7 +621,7 @@ struct DataDirsView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-        .popover(isPresented: $showAppDataFilters, arrowEdge: .top) {
+        .popover(isPresented: $filters.showsPopover, arrowEdge: .top) {
             appDataFilterPopover
         }
     }
@@ -551,11 +629,11 @@ struct DataDirsView: View {
     private var appDataSortMenu: some View {
         Menu {
             ForEach(AppDataSortMode.allCases, id: \.self) { mode in
-                Button(action: { selectedAppDataSortMode = mode }) {
+                Button(action: { filters.appDataSortMode = mode }) {
                     HStack {
                         Text(mode.localizedTitle)
                         Spacer()
-                        if selectedAppDataSortMode == mode {
+                        if filters.appDataSortMode == mode {
                             Image(systemName: "checkmark")
                         }
                     }
@@ -564,7 +642,7 @@ struct DataDirsView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.up.arrow.down.circle")
-                Text(selectedAppDataSortMode.localizedTitle)
+                Text(filters.appDataSortMode.localizedTitle)
             }
         }
         .menuStyle(.borderlessButton)
@@ -578,7 +656,7 @@ struct DataDirsView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.secondary)
 
-                Text(String(format: "排序：%@".localized, selectedAppDataSortMode.localizedTitle))
+                Text(String(format: "排序：%@".localized, filters.appDataSortMode.localizedTitle))
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
 
@@ -686,15 +764,15 @@ struct DataDirsView: View {
             }
             if needsNormalization > 0 {
                 Label(String(format: "%lld 个待整理".localized, Int64(needsNormalization)), systemImage: "arrow.triangle.2.circlepath")
-                    .foregroundColor(.mint)
+                    .foregroundColor(.orange)
             }
             if existingSymlinks > 0 {
                 Label(String(format: "%lld 个现有软链".localized, Int64(existingSymlinks)), systemImage: "link.badge.questionmark")
-                    .foregroundColor(.teal)
+                    .foregroundColor(.orange)
             }
             if relinkable > 0 {
                 Label(String(format: "%lld 个待接回".localized, Int64(relinkable)), systemImage: "arrow.triangle.branch")
-                    .foregroundColor(.indigo)
+                    .foregroundColor(.secondary)
             }
             Spacer()
         }
@@ -732,7 +810,7 @@ struct DataDirsView: View {
     }
 
     private var sortedFilteredLibraryItems: [DataDirItem] {
-        switch selectedAppDataSortMode {
+        switch filters.appDataSortMode {
         case .defaultOrder:
             // 已迁移路径在前，然后按大小降序
             return filteredLibraryItems.sorted { lhs, rhs in
@@ -806,18 +884,18 @@ struct DataDirsView: View {
     }
 
     private var hasActiveAppDataFilters: Bool {
-        !selectedPriorityFilters.isEmpty || !selectedStatusFilters.isEmpty || !selectedTypeFilters.isEmpty
+        !filters.priorities.isEmpty || !filters.statuses.isEmpty || !filters.types.isEmpty
     }
 
     private var activeAppDataFilterCount: Int {
-        selectedPriorityFilters.count + selectedStatusFilters.count + selectedTypeFilters.count
+        filters.priorities.count + filters.statuses.count + filters.types.count
     }
 
     private var activeAppDataFilterLabels: [String] {
         var labels: [String] = []
-        labels.append(contentsOf: DataDirPriority.allCases.filter(selectedPriorityFilters.contains).map(\.localizedTitle))
-        labels.append(contentsOf: appDataStatusOrder.filter(selectedStatusFilters.contains).map { $0.localized })
-        labels.append(contentsOf: appDataFilterTypes.filter(selectedTypeFilters.contains).map(\.localizedTitle))
+        labels.append(contentsOf: DataDirPriority.allCases.filter(filters.priorities.contains).map(\.localizedTitle))
+        labels.append(contentsOf: appDataStatusOrder.filter(filters.statuses.contains).map { $0.localized })
+        labels.append(contentsOf: appDataFilterTypes.filter(filters.types.contains).map(\.localizedTitle))
         return labels
     }
 
@@ -826,25 +904,25 @@ struct DataDirsView: View {
     }
 
     private func matchesAppDataFilters(_ item: DataDirItem) -> Bool {
-        (selectedPriorityFilters.isEmpty || selectedPriorityFilters.contains(item.priority))
-            && (selectedStatusFilters.isEmpty || selectedStatusFilters.contains(item.status))
-            && (selectedTypeFilters.isEmpty || selectedTypeFilters.contains(item.type))
+        (filters.priorities.isEmpty || filters.priorities.contains(item.priority))
+            && (filters.statuses.isEmpty || filters.statuses.contains(item.status))
+            && (filters.types.isEmpty || filters.types.contains(item.type))
     }
 
     private func clearAppDataFilters() {
-        selectedPriorityFilters.removeAll()
-        selectedStatusFilters.removeAll()
-        selectedTypeFilters.removeAll()
+        filters.priorities.removeAll()
+        filters.statuses.removeAll()
+        filters.types.removeAll()
     }
 
     private func priorityFilterBinding(_ priority: DataDirPriority) -> Binding<Bool> {
         Binding(
-            get: { selectedPriorityFilters.contains(priority) },
+            get: { filters.priorities.contains(priority) },
             set: { isSelected in
                 if isSelected {
-                    selectedPriorityFilters.insert(priority)
+                    filters.priorities.insert(priority)
                 } else {
-                    selectedPriorityFilters.remove(priority)
+                    filters.priorities.remove(priority)
                 }
             }
         )
@@ -852,12 +930,12 @@ struct DataDirsView: View {
 
     private func statusFilterBinding(_ status: String) -> Binding<Bool> {
         Binding(
-            get: { selectedStatusFilters.contains(status) },
+            get: { filters.statuses.contains(status) },
             set: { isSelected in
                 if isSelected {
-                    selectedStatusFilters.insert(status)
+                    filters.statuses.insert(status)
                 } else {
-                    selectedStatusFilters.remove(status)
+                    filters.statuses.remove(status)
                 }
             }
         )
@@ -865,12 +943,12 @@ struct DataDirsView: View {
 
     private func typeFilterBinding(_ type: DataDirType) -> Binding<Bool> {
         Binding(
-            get: { selectedTypeFilters.contains(type) },
+            get: { filters.types.contains(type) },
             set: { isSelected in
                 if isSelected {
-                    selectedTypeFilters.insert(type)
+                    filters.types.insert(type)
                 } else {
-                    selectedTypeFilters.remove(type)
+                    filters.types.remove(type)
                 }
             }
         )
@@ -1722,7 +1800,7 @@ private struct AppListRow: View {
             if app.isResigned {
                 Image(systemName: "seal.fill")
                     .font(.system(size: 9))
-                    .foregroundColor(.teal)
+                    .foregroundColor(.accentColor)
                     .help("此应用已被 Ad-hoc 重签名".localized)
             }
 
@@ -1730,12 +1808,12 @@ private struct AppListRow: View {
             if app.isSparkleApp {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 9))
-                    .foregroundColor(.teal.opacity(0.7))
+                    .foregroundColor(.secondary)
                     .help("Sparkle 自更新应用".localized)
             } else if app.isElectronApp {
                 Image(systemName: "atom")
                     .font(.system(size: 9))
-                    .foregroundColor(.indigo.opacity(0.7))
+                    .foregroundColor(.secondary)
                     .help("Electron 应用".localized)
             }
 

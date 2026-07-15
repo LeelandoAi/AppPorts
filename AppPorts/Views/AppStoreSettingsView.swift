@@ -49,13 +49,19 @@ struct AppStoreSettingsView: View {
     @AppStorage("MaxLogSizeBytes") private var maxLogSize = 2 * 1024 * 1024
     
     /// 是否启用开机自动重签名（默认开启）
-    @AppStorage("autoResignAtLogin") private var autoResignAtLogin = true
+    @AppStorage("autoResignAtLogin") private var autoResignAtLogin = AutoResignInstaller.isInstalled
+
+    /// 数据目录迁移完成后是否自动重签名关联应用
+    @AppStorage("autoResignEnabled") private var autoResignEnabled = false
+
     @State private var showClearLogConfirmation = false
+    @State private var isUpdatingAutoResign = false
 
     private var isMASExternalSupported: Bool { AppMigrationService.isMASExternalInstallSupported }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
             // 标题栏
             HStack {
                 Image(systemName: "app.badge.checkmark")
@@ -83,11 +89,6 @@ struct AppStoreSettingsView: View {
                 .padding()
                 .background(Color.green.opacity(0.06))
                 .cornerRadius(12)
-                .onAppear {
-                    // 自动启用
-                    allowAppStoreMigration = true
-                    allowIOSAppMigration = true
-                }
             } else {
                 // macOS < 15.1：显示原有开关
                 Text("默认情况下，来自 App Store 的应用不允许迁移，因为迁移后将无法通过 App Store 更新。".localized)
@@ -160,6 +161,68 @@ struct AppStoreSettingsView: View {
                 .cornerRadius(12)
             }
             
+            // 签名设置
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "seal")
+                                .foregroundStyle(.tint)
+                            Text("迁移后重签名".localized)
+                                .font(.headline)
+                        }
+                        Text("数据迁移完成后，自动对关联应用执行 Ad-hoc 重签名，避免 Finder 提示「已损坏」".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+
+                    Toggle("迁移后重签名".localized, isOn: $autoResignEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+
+                Divider()
+
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .foregroundStyle(.tint)
+                            Text("开机自动重签名".localized)
+                                .font(.headline)
+                        }
+                        Text("macOS 重启后 Gatekeeper 可能使 Ad-hoc 签名失效。开启后每次登录自动对已迁移应用重新签名。".localized)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+
+                    Toggle("开机自动重签名".localized, isOn: $autoResignAtLogin)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .disabled(isUpdatingAutoResign)
+                        .onChange(of: autoResignAtLogin) { enabled in
+                            guard !isUpdatingAutoResign else { return }
+                            isUpdatingAutoResign = true
+                            Task {
+                                let succeeded = await updateAutoResignInstallation(enabled: enabled)
+                                if enabled && !succeeded {
+                                    autoResignAtLogin = false
+                                }
+                                isUpdatingAutoResign = false
+                            }
+                        }
+                }
+            }
+            .padding()
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(12)
+
             // 日志设置
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 12) {
@@ -222,49 +285,6 @@ struct AppStoreSettingsView: View {
             .background(Color.primary.opacity(0.03))
             .cornerRadius(12)
 
-            // 开机自动重签名
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .foregroundColor(.orange)
-                            Text("开机自动重签名".localized)
-                                .font(.headline)
-                        }
-                        Text("macOS 重启后 Gatekeeper 可能使 Ad-hoc 签名失效。开启后每次登录自动对已迁移应用重新签名。".localized)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer()
-
-                    Toggle("开机自动重签名".localized, isOn: $autoResignAtLogin)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .onChange(of: autoResignAtLogin) { enabled in
-                            if enabled {
-                                do {
-                                    try AutoResignInstaller.install()
-                                } catch {
-                                    AppLogger.shared.logError(
-                                        "安装自动重签名失败",
-                                        error: error,
-                                        errorCode: "AUTO-RESIGN-INSTALL-FAILED"
-                                    )
-                                    autoResignAtLogin = false
-                                }
-                            } else {
-                                AutoResignInstaller.uninstall()
-                            }
-                        }
-                }
-            }
-            .padding()
-            .background(Color.primary.opacity(0.03))
-            .cornerRadius(12)
-
             Spacer()
 
             // 底部说明
@@ -275,8 +295,9 @@ struct AppStoreSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            }
+            .padding(24)
         }
-        .padding(24)
         .frame(minWidth: 420, minHeight: 550)
         .confirmationDialog(
             "清空日志".localized,
@@ -288,6 +309,27 @@ struct AppStoreSettingsView: View {
             }
             Button("取消".localized, role: .cancel) { }
         }
+    }
+
+    private func updateAutoResignInstallation(enabled: Bool) async -> Bool {
+        await Task.detached(priority: .utility) {
+            if enabled {
+                do {
+                    try AutoResignInstaller.install()
+                    return true
+                } catch {
+                    AppLogger.shared.logError(
+                        "安装自动重签名失败",
+                        error: error,
+                        errorCode: "AUTO-RESIGN-INSTALL-FAILED"
+                    )
+                    return false
+                }
+            }
+
+            AutoResignInstaller.uninstall()
+            return true
+        }.value
     }
 }
 

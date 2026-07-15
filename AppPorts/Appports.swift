@@ -38,6 +38,7 @@ struct AppMoverApp: App {
     /// 记录首次引导是否已经完成
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showAboutSheet = false
+    @State private var showClearLogConfirmation = false
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -67,6 +68,17 @@ struct AppMoverApp: App {
                     .environment(\.locale, languageManager.locale)
                     .id(languageManager.language)
             }
+            .confirmationDialog(
+                "清空日志".localized,
+                isPresented: $showClearLogConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("清空日志".localized, role: .destructive) {
+                    AppLogger.shared.clearLog()
+                }
+                Button("取消".localized, role: .cancel) { }
+            }
+            .frame(minWidth: 900, idealWidth: 1100, minHeight: 600, idealHeight: 720)
         }
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
@@ -160,8 +172,8 @@ struct AppMoverApp: App {
                 Text(String(format: "当前大小: %@".localized, AppLogger.shared.getLogSizeString()))
                     .font(.caption)
                 
-                Button("清空日志".localized) {
-                    AppLogger.shared.clearLog()
+                Button("清空日志".localized, role: .destructive) {
+                    showClearLogConfirmation = true
                 }
             }
             

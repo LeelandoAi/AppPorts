@@ -121,7 +121,7 @@ struct CustomDirRowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text(entry.name) + Text(", ") + Text(CustomDirStatus.localized(entry.status)))
+        .accessibilityLabel("\(entry.name), \(CustomDirStatus.localized(entry.status))")
     }
 }
 
