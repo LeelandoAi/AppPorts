@@ -48,8 +48,10 @@ struct AppStoreSettingsView: View {
     /// 最大日志文件大小（字节）
     @AppStorage("MaxLogSizeBytes") private var maxLogSize = 2 * 1024 * 1024
     
-    /// 是否启用开机自动重签名。新安装默认关闭；已经装过登录代理的老用户保持开启。
-    @AppStorage("autoResignAtLogin") private var autoResignAtLogin = AutoResignInstaller.isInstalled
+    /// 新安装默认关闭；仅受支持的系统保留已有登录任务的默认状态。
+    @AppStorage(AutoResignInstaller.enabledDefaultsKey) private var autoResignAtLogin = AutoResignInstaller.isSupported && AutoResignInstaller.isInstalled
+    @AppStorage(AutoResignInstaller.policyErrorDefaultsKey) private var autoResignPolicyError = ""
+    @State private var isRetryingAutoResignCleanup = false
 
     /// 经典数据迁移模式：容器目录允许符号链接迁移、沙盒应用允许重签名。默认关闭。
     @AppStorage(MigrationPreferences.classicDataMigrationKey) private var classicDataMigrationEnabled = false
@@ -243,12 +245,16 @@ struct AppStoreSettingsView: View {
                         Spacer()
                         Picker("最大日志大小".localized, selection: $maxLogSize) {
                             Text("1 MB").tag(1 * 1024 * 1024)
+                            Text("2 MB").tag(2 * 1024 * 1024)
                             Text("5 MB").tag(5 * 1024 * 1024)
                             Text("10 MB").tag(10 * 1024 * 1024)
                             Text("50 MB").tag(50 * 1024 * 1024)
                             Text("100 MB").tag(100 * 1024 * 1024)
                         }
-                        .frame(width: 100)
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .frame(minWidth: 112, alignment: .trailing)
                     }
                     
                     HStack {
@@ -278,11 +284,13 @@ struct AppStoreSettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.triangle.2.circlepath")
-                                .foregroundColor(.orange)
+                                .foregroundColor(AutoResignInstaller.isSupported ? .orange : .secondary)
                             Text("开机自动重签名".localized)
                                 .font(.headline)
                         }
-                        Text("登录时仅检查旧版签名记录。完整备份由 AppPorts 安全处理，请在应用内手动重签。手动签名或恢复会停止本次登录的后台任务，下次登录仍按此设置运行。".localized)
+                        Text(AutoResignInstaller.isSupported
+                             ? "登录时仅检查旧版签名记录。完整备份由 AppPorts 安全处理，请在应用内手动重签。手动签名或恢复会停止本次登录的后台任务，下次登录仍按此设置运行。".localized
+                             : "macOS 27 及以上不支持开机自动重签名，以免影响应用启动。请在应用内查看签名修复步骤。".localized)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -290,11 +298,16 @@ struct AppStoreSettingsView: View {
 
                     Spacer()
 
-                    Toggle("开机自动重签名".localized, isOn: $autoResignAtLogin)
+                    Toggle("开机自动重签名".localized, isOn: Binding(
+                        get: { AutoResignInstaller.isSupported && autoResignAtLogin },
+                        set: { autoResignAtLogin = $0 }
+                    ))
                         .toggleStyle(.switch)
                         .labelsHidden()
-                        .disabled(operationState.isBusy)
+                        .disabled(!AutoResignInstaller.isSupported || operationState.isBusy)
                         .onChange(of: autoResignAtLogin) { enabled in
+                            // 系统策略负责 27 上的完整停止与清理，不能再触发旧卸载流程。
+                            guard AutoResignInstaller.isSupported else { return }
                             if enabled {
                                 do {
                                     try AutoResignInstaller.install()
@@ -310,6 +323,19 @@ struct AppStoreSettingsView: View {
                                 AutoResignInstaller.uninstall()
                             }
                         }
+                }
+
+                if !AutoResignInstaller.isSupported && !autoResignPolicyError.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("旧的登录重签任务尚未完全关闭，请重试。".localized)
+                            .foregroundColor(.orange)
+                        Text(verbatim: autoResignPolicyError)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("重试".localized, action: retryAutoResignCleanup)
+                            .disabled(operationState.isBusy || isRetryingAutoResignCleanup)
+                    }
+                    .font(.caption)
                 }
             }
             .padding()
@@ -328,6 +354,19 @@ struct AppStoreSettingsView: View {
             }
         }
         .padding(.top, 20)
+    }
+
+    @MainActor
+    private func retryAutoResignCleanup() {
+        isRetryingAutoResignCleanup = true
+        Task {
+            defer { isRetryingAutoResignCleanup = false }
+            do {
+                try await AutoResignInstaller.refreshInstalledScriptIfNeeded()
+            } catch {
+                AppLogger.shared.logError("重试关闭开机重签任务失败", error: error)
+            }
+        }
     }
 
     // MARK: - 准备情况
@@ -378,6 +417,9 @@ struct AppStoreSettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    Link("查看完整说明".localized, destination: DocumentationLink.url(page: "settings", anchor: "classic-data-migration-mode"))
+                        .font(.caption)
+                        .padding(.top, 4)
                 }
 
                 Spacer()

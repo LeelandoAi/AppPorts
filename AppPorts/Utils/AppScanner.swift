@@ -239,6 +239,7 @@ actor AppScanner {
                     isIOSApp: isIOS,
                     isResigned: signing.isResigned,
                     signatureReplaced: signing.signatureReplaced,
+                    signatureCheckUnavailable: signing.signatureCheckUnavailable,
                     isElectronApp: isElectron,
                     isSparkleApp: isSparkle,
                     hasSelfUpdater: hasUpdater,
@@ -283,6 +284,7 @@ actor AppScanner {
                             isIOSApp: isIOS,
                             isResigned: signing.isResigned,
                             signatureReplaced: signing.signatureReplaced,
+                            signatureCheckUnavailable: signing.signatureCheckUnavailable,
                             version: version,
                             containerKind: .singleAppContainer,
                             appCount: 1
@@ -939,6 +941,7 @@ actor AppScanner {
                     isRunning: false,
                     isResigned: signing.isResigned,
                     signatureReplaced: signing.signatureReplaced,
+                    signatureCheckUnavailable: signing.signatureCheckUnavailable,
                     isElectronApp: isElectron,
                     isSparkleApp: isSparkle,
                     hasSelfUpdater: hasUpdater,
@@ -982,6 +985,7 @@ actor AppScanner {
                             isIOSApp: isIOS,
                             isResigned: signing.isResigned,
                             signatureReplaced: signing.signatureReplaced,
+                            signatureCheckUnavailable: signing.signatureCheckUnavailable,
                             containerKind: .singleAppContainer,
                             appCount: 1
                         )
@@ -1043,6 +1047,7 @@ actor AppScanner {
                     isIOSApp: isIOS,
                     isResigned: signing.isResigned,
                     signatureReplaced: signing.signatureReplaced,
+                    signatureCheckUnavailable: signing.signatureCheckUnavailable,
                     containerKind: .standaloneApp
                 )
                 candidates.append(makeCandidate(for: app, bundleURL: externalTargetURL, priority: 40))
@@ -1073,6 +1078,7 @@ actor AppScanner {
                     isIOSApp: isIOS,
                     isResigned: signing.isResigned,
                     signatureReplaced: signing.signatureReplaced,
+                    signatureCheckUnavailable: signing.signatureCheckUnavailable,
                     containerKind: .singleAppContainer,
                     appCount: 1
                 )
@@ -1118,6 +1124,7 @@ actor AppScanner {
                     isIOSApp: isIOS,
                     isResigned: signing.isResigned,
                     signatureReplaced: signing.signatureReplaced,
+                    signatureCheckUnavailable: signing.signatureCheckUnavailable,
                     containerKind: .standaloneApp
                 )
                 candidates.append(makeCandidate(for: app, bundleURL: itemURL, priority: 15))
@@ -1239,10 +1246,12 @@ actor AppScanner {
         return appSupport.appendingPathComponent("AppPorts/signature-backups")
     }
 
-    struct SigningStatus {
+    struct SigningStatus: Equatable, Sendable {
         static let clean = SigningStatus(isResigned: false, signatureReplaced: false)
+        static let unavailable = SigningStatus(isResigned: false, signatureReplaced: false, signatureCheckUnavailable: true)
         let isResigned: Bool
         let signatureReplaced: Bool
+        var signatureCheckUnavailable = false
     }
 
     private func checkResignedStatus(bundleURL: URL?) -> Bool {
@@ -1251,33 +1260,33 @@ actor AppScanner {
 
     /// 结合签名备份与当前签名判断：是否被 AppPorts 重签过、原始开发者签名是否已被替换。
     /// 只观察当前状态，恢复材料由显式的恢复事务清理。
-    private func checkSigningStatus(bundleURL: URL?) -> SigningStatus {
+    func checkSigningStatus(bundleURL: URL?) -> SigningStatus {
         guard let bundleURL else { return .clean }
 
-        // 先用本地 bundle ID 检查
-        if let bundleID = readBundleIdentifier(from: bundleURL),
-           let status = signingStatus(realAppURL: bundleURL, bundleID: bundleID) {
-            return status
+        // 与签名操作共用解析规则，绝不把本地启动壳的 Ad-hoc 签名当作真实应用的签名。
+        guard let realURL = try? CodeSigner.resolveAppURL(at: bundleURL),
+              let bundleID = readBundleIdentifier(from: realURL) else {
+            // 外置盘离线时仍保留检查入口；备份也始终由显式恢复事务管理。
+            if let localID = readBundleIdentifier(from: bundleURL) {
+                let originalID = localID.hasSuffix(".appports.stub")
+                    ? String(localID.dropLast(".appports.stub".count)) : localID
+                if CodeSigner.originalSigningIdentity(bundleIdentifier: originalID, backupDirectoryURL: backupDirectoryURL) != nil {
+                    return .unavailable
+                }
+            }
+            return .clean
         }
 
-        // 已链接应用：备份保存在真实应用的 bundle ID 下，需要解析外部路径
-        if let externalURL = resolveExternalRealApp(from: bundleURL),
-           let realBundleID = readBundleIdentifier(from: externalURL),
-           let status = signingStatus(realAppURL: externalURL, bundleID: realBundleID) {
-            return status
-        }
-
-        return .clean
+        return signingStatus(realAppURL: realURL, bundleID: bundleID) ?? .clean
     }
 
     private func signingStatus(realAppURL: URL, bundleID: String) -> SigningStatus? {
         guard let originalIdentity = CodeSigner.originalSigningIdentity(bundleIdentifier: bundleID, backupDirectoryURL: backupDirectoryURL) else {
             return nil
         }
-        let probeResult = isAdHocSigned(at: realAppURL)
         // 预备份后、重签前仍可能是开发者签名；扫描不得删除恢复材料。
-        // 查不出当前签名时保留原来的提示，等待下次查询。
-        let currentlyAdHoc = probeResult ?? true
+        // 查不出来是独立状态，不能推断已经替换，也不能当作已恢复。
+        guard let currentlyAdHoc = isAdHocSigned(at: realAppURL) else { return .unavailable }
         return SigningStatus(
             isResigned: currentlyAdHoc,
             signatureReplaced: CodeSigner.isSignatureReplaced(originalIdentity: originalIdentity, currentlyAdHoc: currentlyAdHoc)
@@ -1430,7 +1439,9 @@ actor AppScanner {
             )
             return nil
         }
-        return output.contains("Signature=adhoc")
+        if output.contains("Signature=adhoc") { return true }
+        if output.components(separatedBy: .newlines).contains(where: { $0.hasPrefix("Authority=") }) { return false }
+        return nil
     }
 }
 

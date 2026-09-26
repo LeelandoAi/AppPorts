@@ -407,6 +407,44 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertNil(items.first(where: { $0.path.path.contains("QQMusicMac") }), "通用后缀 mac 不应匹配到其他应用的容器")
     }
 
+    func testAppNameRegionDoesNotIncludeUnrelatedLinkedContainersInRepair() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let appURL = try createAppBundle(named: "Trae CN.app", bundleID: "cn.trae.app", in: workspace.appsURL)
+        let ownDataURL = workspace.homeURL.appendingPathComponent("Library/Containers/cn.trae.app/Data/Documents/Payload")
+        let unrelatedURL = workspace.homeURL.appendingPathComponent("Library/Containers/cn.wps.wpslaunchhelper/Data/Library/Application Support/Kingsoft")
+        let externalDataURL = workspace.externalRootURL.appendingPathComponent("Kingsoft")
+        try createDirectoryWithPayload(at: ownDataURL)
+        try createDirectoryWithPayload(at: externalDataURL)
+        try fileManager.createDirectory(at: unrelatedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(at: unrelatedURL, withDestinationURL: externalDataURL)
+
+        let items = await DataDirScanner(
+            homeDir: workspace.homeURL,
+            mountStore: ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("mounts.plist")),
+            isSandboxedApplication: { _ in false }
+        ).scanLibraryDirs(for: AppItem(name: "Trae CN.app", path: appURL, status: AppStatus.local))
+
+        XCTAssertTrue(items.contains { $0.path.standardizedFileURL == ownDataURL.standardizedFileURL })
+        XCTAssertFalse(items.contains { $0.path.path.contains("cn.wps.wpslaunchhelper") }, "地区词 CN 不能把其他应用的链接送进签名修复的还原列表")
+        XCTAssertEqual(try fileManager.destinationOfSymbolicLink(atPath: unrelatedURL.path), externalDataURL.path)
+    }
+
+    func testShortProductNameStillMatchesItsOwnData() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let appURL = try createAppBundle(named: "QQ.app", bundleID: "com.tencent.qq", in: workspace.appsURL)
+        let ownDataURL = workspace.homeURL.appendingPathComponent("Library/Application Support/QQ")
+        try createDirectoryWithPayload(at: ownDataURL)
+
+        let items = await DataDirScanner(homeDir: workspace.homeURL).scanLibraryDirs(
+            for: AppItem(name: "QQ.app", path: appURL, status: AppStatus.local)
+        )
+        XCTAssertTrue(items.contains { $0.path.standardizedFileURL == ownDataURL.standardizedFileURL })
+    }
+
     // MARK: - 沙盒应用与挂载迁移
 
     func testSandboxedAppContainerDataRequiresMountMigration() async throws {
@@ -548,6 +586,56 @@ final class DataDirScannerTests: XCTestCase {
     }
 
     // MARK: - 目录大小缓存
+
+    func testNestedDirectoryChangesInvalidateEveryAncestorInBothMountStates() throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let documents = workspace.homeURL.appendingPathComponent("Documents")
+        let files = documents.appendingPathComponent("xwechat_files")
+        let account = files.appendingPathComponent("account")
+        try createDirectoryWithPayload(at: account)
+        try Data(repeating: 1, count: 100).write(to: documents.appendingPathComponent("other.data"))
+        try Data(repeating: 2, count: 20).write(to: files.appendingPathComponent("metadata.data"))
+
+        for mounted in [false, true] {
+            XCTAssertEqual(fastDirectorySize(at: account, isMountPoint: { _ in mounted }), 7)
+            XCTAssertEqual(fastDirectorySize(at: files, isMountPoint: { _ in mounted }), 27)
+            XCTAssertEqual(fastDirectorySize(at: documents, isMountPoint: { _ in mounted }), 127)
+        }
+
+        // Restore, unmount, and remount can grow or shrink the same nested path.
+        for payloadSize in [4096, 0, 8192] {
+            try Data(repeating: 3, count: payloadSize).write(to: account.appendingPathComponent("payload.txt"))
+            invalidateSizeCache(for: account)
+
+            for mounted in [false, true] {
+                XCTAssertEqual(fastDirectorySize(at: account, isMountPoint: { _ in mounted }), Int64(payloadSize))
+                XCTAssertEqual(fastDirectorySize(at: files, isMountPoint: { _ in mounted }), Int64(payloadSize + 20))
+                XCTAssertEqual(fastDirectorySize(at: documents, isMountPoint: { _ in mounted }), Int64(payloadSize + 120))
+            }
+        }
+    }
+
+    func testAncestorInvalidationPreservesUnrelatedDirectoryCaches() throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let changed = workspace.homeURL.appendingPathComponent("Documents/account")
+        let sibling = workspace.homeURL.appendingPathComponent("Documents/other")
+        let similarPrefix = workspace.homeURL.appendingPathComponent("DocumentsBackup")
+        for directory in [changed, sibling, similarPrefix] {
+            try createDirectoryWithPayload(at: directory)
+            XCTAssertEqual(fastDirectorySize(at: directory), 7)
+            try fileManager.removeItem(at: directory.appendingPathComponent("payload.txt"))
+        }
+
+        invalidateSizeCache(for: changed)
+
+        XCTAssertEqual(fastDirectorySize(at: changed), 0)
+        XCTAssertEqual(fastDirectorySize(at: sibling), 7)
+        XCTAssertEqual(fastDirectorySize(at: similarPrefix), 7)
+    }
 
     /// 未挂载的挂载点就是一个空目录，算出来是 0。这个 0 一旦被缓存，
     /// 卷挂好之后列表仍会一直显示「0 字节」，所以 0 不能进缓存。

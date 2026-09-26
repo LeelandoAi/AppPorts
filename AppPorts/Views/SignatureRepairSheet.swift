@@ -5,15 +5,8 @@
 
 import SwiftUI
 
-/// 签名被替换的应用的修复面板：四步走，全程不删除任何数据。
-///
-/// 1. 把该应用所有已链接的容器目录还原回本地
-/// 2. 应用本体迁回本地（如果它在外置盘上）
-/// 3. 从完整备份恢复签名，或由用户从官方渠道覆盖安装
-/// 4. 可选：恢复后用挂载迁移把数据放回 APFS 外置盘
-///
-/// 顺序不能变：重装完的应用是正常的沙盒应用，读不到符号链接后面的数据，
-/// 用户会误以为"重装了还是空白"。
+/// 先还原旧容器链接，再恢复原始应用。迁回本机仅是覆盖安装前的准备，
+/// 不作为从完整备份恢复外置应用的前置条件。
 struct SignatureRepairSheet: View {
     let app: AppItem
     let onRestoreSignature: (AppItem) -> Void
@@ -34,14 +27,14 @@ struct SignatureRepairSheet: View {
     @State private var realAppURL: URL?
     @State private var currentAuthority: String?
     @State private var signatureRestored = false
+    @State private var isCheckingSignature = false
+    @State private var signatureCheckToken = UUID()
 
     private var appIsOnExternalDrive: Bool {
         app.status == AppStatus.linked || app.status == AppStatus.partialLinked
     }
 
     private var stepOneDone: Bool { !isScanning && linkedContainerItems.isEmpty }
-    private var stepTwoDone: Bool { !appIsOnExternalDrive }
-    private var stepThreeDone: Bool { signatureRestored }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -50,7 +43,7 @@ struct SignatureRepairSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(String(format: "修复「%@」的签名".localized, app.displayName))
                         .font(.title3.bold())
-                    Text("AppPorts 曾用 Ad-hoc 签名替换了它的开发者签名。在 macOS 27 上这样的应用可能无法打开。按下面的顺序处理，数据不会丢失；能正常打开的应用可以跳过第 3 步。".localized)
+                    Text("先检查数据位置，再恢复原始签名。请退出应用、连接外置盘，并保留现有数据和备份。".localized)
                         .font(.callout)
                         .foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -85,68 +78,70 @@ struct SignatureRepairSheet: View {
 
             stepRow(
                 number: 2,
-                title: "应用本体迁回本地".localized,
-                done: stepTwoDone,
-                detail: stepTwoDone
-                    ? "应用本体在本地。".localized
-                    : "应用本体在外置盘上，本地只是启动壳。直接覆盖安装会把壳盖掉，外置副本变成孤儿，先迁回来。".localized
-            ) {
-                if !stepTwoDone {
-                    Button("迁回本地".localized) {
-                        onDismiss()
-                        onMoveBack(app)
-                    }
-                    .disabled(!stepOneDone || operationState.isBusy)
-                }
-            }
-
-            stepRow(
-                number: 3,
                 title: "恢复原始签名或从官方渠道重装".localized,
-                done: stepThreeDone,
-                detail: stepThreeDone
-                    ? String(format: "签名已恢复：%@".localized, currentAuthority ?? "")
-                    : String(format: "当前签名：%@。退出应用后，可从完整备份恢复原始签名；旧备份需要选择同版本官方原版。也可以从 App Store 或官网下载重装。应用数据目录不会被替换。".localized, currentAuthority ?? "Ad-hoc")
+                done: signatureRestored,
+                detail: isCheckingSignature
+                    ? "正在检查签名…".localized
+                    : (signatureRestored
+                        ? String(format: "签名已恢复：%@".localized, currentAuthority ?? "")
+                        : String(format: "当前签名：%@。退出应用后，可从完整备份恢复原始签名；旧备份需要选择同版本官方原版。也可以从 App Store 或官网下载重装。应用数据目录不会被替换。".localized,
+                                 currentAuthority ?? "暂时无法检查签名".localized))
             ) {
-                if !stepThreeDone {
+                if !signatureRestored {
                     Button("恢复原始签名".localized) {
                         onDismiss()
                         onRestoreSignature(app)
                     }
-                    .disabled(!stepOneDone || operationState.isBusy || app.isRunning)
-                    if app.isAppStoreApp {
-                        Button("打开 App Store".localized) {
-                            openAppStore()
-                        }
-                    } else {
-                        Button("在 Finder 中显示".localized) {
-                            NSWorkspace.shared.activateFileViewerSelecting([realAppURL ?? app.displayURL])
-                        }
-                    }
-                    Button("重新检查".localized) {
-                        refreshSignatureState()
-                    }
+                    .disabled(!stepOneDone || isCheckingSignature || operationState.isBusy || app.isRunning)
                 }
+                Button("重新检查".localized) {
+                    refreshSignatureState()
+                    scanContainerItems()
+                }
+                .disabled(isCheckingSignature || isRestoring || operationState.isBusy)
+                if isCheckingSignature { ProgressView().controlSize(.small) }
             }
-            if let bundleID = realAppURL.flatMap(CodeSigner.bundleIdentifier(at:)), !stepThreeDone {
-                Text(String(format: "Bundle ID：%@".localized, bundleID))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .textSelection(.enabled)
-                    .padding(.leading, 34)
+            if !signatureRestored {
+                DisclosureGroup("从官方渠道重装".localized) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(appIsOnExternalDrive
+                             ? "仅在覆盖安装前需要迁回本地。从完整备份恢复原始签名，可以直接修复外置盘上的应用。".localized
+                             : "应用本体在本地。".localized)
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if appIsOnExternalDrive {
+                            Button("迁回本地".localized) {
+                                onDismiss()
+                                onMoveBack(app)
+                            }
+                            .disabled(!stepOneDone || operationState.isBusy || app.isRunning)
+                        } else if app.isAppStoreApp {
+                            Button("打开 App Store".localized) { openAppStore() }
+                                .disabled(!stepOneDone || operationState.isBusy)
+                        } else {
+                            Button("在 Finder 中显示".localized) {
+                                NSWorkspace.shared.activateFileViewerSelecting([realAppURL ?? app.displayURL])
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.leading, 34)
             }
 
             stepRow(
-                number: 4,
+                number: 3,
                 title: "可选：用挂载迁移把数据放回外置盘".localized,
                 done: false,
-                detail: "恢复签名或重装后，在「应用数据」页使用「挂载迁移」。需要 APFS 外置盘，第一次打开应用时点允许授权框。".localized
+                detail: "签名检查通过后，请先从 Finder 或 Dock 打开应用并确认数据正常，再到「应用数据」页迁移。".localized
             ) {
                 Button("前往应用数据".localized) {
                     onDismiss()
                     onOpenDataDirs(app)
                 }
-                .disabled(!(stepOneDone && stepTwoDone && stepThreeDone))
+                .disabled(!stepOneDone || !signatureRestored || operationState.isBusy)
             }
 
             if let errorMessage {
@@ -162,7 +157,7 @@ struct SignatureRepairSheet: View {
                 Link("查看完整说明".localized, destination: DocumentationLink.url(page: "macos-27"))
                     .font(.caption)
                 Spacer()
-                Button("关闭".localized) { onDismiss() }
+                Button(signatureRestored ? "关闭".localized : "以后再说".localized) { onDismiss() }
                     .keyboardShortcut(.cancelAction)
             }
         }
@@ -172,6 +167,7 @@ struct SignatureRepairSheet: View {
             refreshSignatureState()
             scanContainerItems()
         }
+        .onDisappear { signatureCheckToken = UUID() }
     }
 
     // MARK: - 子视图
@@ -211,22 +207,37 @@ struct SignatureRepairSheet: View {
             }
             Spacer(minLength: 0)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     // MARK: - 状态刷新
 
     private func refreshSignatureState() {
-        let url = (try? CodeSigner.resolveAppURL(at: app.displayURL)) ?? app.displayURL
+        let token = UUID()
+        signatureCheckToken = token
+        signatureRestored = false
+        currentAuthority = nil
+        guard let url = try? CodeSigner.resolveAppURL(at: app.displayURL) else {
+            realAppURL = nil
+            isCheckingSignature = false
+            return
+        }
         realAppURL = url
+        isCheckingSignature = true
         Task.detached(priority: .userInitiated) {
             let signer = CodeSigner()
+            let signing = await AppScanner().checkSigningStatus(bundleURL: url)
             let authority = await signer.getSigningIdentity(appURL: url)
             let status = await signer.verify(appURL: url)
-            let adHoc = authority == nil || status == .adHoc
+            let originalIdentity = CodeSigner.bundleIdentifier(at: url).flatMap {
+                CodeSigner.originalSigningIdentity(bundleIdentifier: $0)
+            }
             await MainActor.run {
-                currentAuthority = authority ?? "Ad-hoc"
-                signatureRestored = !adHoc && status == .valid
+                guard signatureCheckToken == token else { return }
+                currentAuthority = signing.signatureCheckUnavailable ? nil : (signing.isResigned ? "Ad-hoc" : authority)
+                signatureRestored = !signing.signatureCheckUnavailable && authority != nil && status == .valid
+                    && (originalIdentity == nil || authority == originalIdentity)
+                isCheckingSignature = false
             }
         }
     }

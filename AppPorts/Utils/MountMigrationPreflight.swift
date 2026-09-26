@@ -155,7 +155,7 @@ struct MountMigrationGuidance: Equatable {
                 Bullet(icon: "checkmark.shield", text: "不会抹掉或重新分区外部存储，盘上现有文件保持不变".localized),
                 Bullet(icon: "eye.slash", text: "新建的数据卷与盘上其他内容共享剩余空间，平时不会出现在 Finder 边栏和桌面".localized),
                 Bullet(icon: "hand.raised", text: String(format: "迁移后第一次打开「%@」时，系统会询问是否允许访问可移动宗卷，请点「允许」".localized, appName)),
-                Bullet(icon: "cable.connector", text: String(format: "使用「%@」前先连接这块外部存储。没连接时它只会看到空目录，数据不会丢失，连接后自动接回".localized, appName)),
+                Bullet(icon: "cable.connector", text: String(format: "使用「%@」前先连接这块外部存储。未连接时应用可能无法访问数据，连接后 AppPorts 会尝试重新挂载。".localized, appName)),
                 Bullet(icon: "lock.open", text: "这块外部存储没有加密：盘丢失时，别人可以读取迁移过去的数据".localized)
             ]
             if let dataSize {
@@ -166,12 +166,12 @@ struct MountMigrationGuidance: Equatable {
                 icon: "externaldrive.fill.badge.plus",
                 isReady: true,
                 intro: String(
-                    format: "「%@」是沙盒应用。它的数据会搬到外部存储「%@」上的一个专用数据卷里，再接回原来的位置；应用照常使用原来的路径，不需要重签名。".localized,
+                    format: "将「%@」的数据迁移到外部存储「%@」，保留原始签名。应用继续使用原来的数据位置。".localized,
                     appName,
                     destinationName
                 ),
                 bullets: bullets,
-                detail: paths,
+                detail: paths + "\n" + "挂载迁移".localized + " · APFS",
                 actions: [Action(kind: .migrate, title: "迁移数据".localized, isPrimary: true)],
                 cancelTitle: "取消".localized
             )

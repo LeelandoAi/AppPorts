@@ -11,6 +11,8 @@ import Foundation
 /// 用户每次登录时自动对签名已失效的已迁移应用执行 ad-hoc 重签名。
 enum AutoResignInstaller {
 
+    static let enabledDefaultsKey = "autoResignAtLogin"
+    static let policyErrorDefaultsKey = "autoResignSystemPolicyError"
     private static let label = "com.shimoko.AppPorts.re-sign"
     private static let scriptName = "AppPorts-ReSign.sh"
     private static let backgroundTaskStopper = BackgroundTaskStopper()
@@ -29,12 +31,31 @@ enum AutoResignInstaller {
         appSupportDir.appendingPathComponent(scriptName)
     }
 
+    static var isSupported: Bool {
+        supportsLoginResigning(macOSMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion)
+    }
+
+    static func supportsLoginResigning(macOSMajorVersion: Int) -> Bool {
+        macOSMajorVersion > 0 && macOSMajorVersion < 27
+    }
+
     // MARK: - Install
 
-    /// 升级时先停止旧任务再同步脚本；保留 plist，下次登录仍按用户设置运行。
+    /// macOS 27 起停用旧任务；较早系统先停止旧脚本，再同步带版本保护的新脚本。
     static func refreshInstalledScriptIfNeeded() async throws {
-        guard isInstalled,
-              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        // 测试宿主启动时不能修改开发机的真实登录任务或偏好。
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        if try await disableIfUnsupported(
+            macOSMajorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+            defaults: .standard,
+            agentPlistURL: agentPlistURL,
+            scriptURL: scriptURL,
+            stopTask: { try await stopBackgroundTask() }
+        ) {
+            return
+        }
+
+        guard isInstalled else { return }
         guard let bundledScript = Bundle.main.url(forResource: scriptName, withExtension: nil) else {
             throw InstallError.scriptNotFound
         }
@@ -42,6 +63,60 @@ enum AutoResignInstaller {
             try await stopBackgroundTask()
         }
         try synchronizeScript(from: bundledScript, to: scriptURL)
+    }
+
+    /// 先把旧脚本改为空操作，再确认整个进程组退出，最后删除登录任务。
+    /// 路径、偏好和停止动作可注入，测试不会接触真实登录项或签名备份。
+    @discardableResult
+    static func disableIfUnsupported(
+        macOSMajorVersion: Int,
+        defaults: UserDefaults,
+        agentPlistURL: URL,
+        scriptURL: URL,
+        stopTask: () async throws -> Void
+    ) async throws -> Bool {
+        guard !supportsLoginResigning(macOSMajorVersion: macOSMajorVersion) else { return false }
+
+        let fm = FileManager.default
+        let hadInstallation = fm.fileExists(atPath: agentPlistURL.path) || fm.fileExists(atPath: scriptURL.path)
+        let wasEnabled = defaults.bool(forKey: enabledDefaultsKey)
+        defaults.set(false, forKey: enabledDefaultsKey)
+
+        if hadInstallation {
+            do {
+                // 即使本次停止/清理失败，下一次登录也不能再执行旧脚本。
+                try fm.createDirectory(at: scriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("#!/bin/bash\n# Login re-signing has been disabled by AppPorts.\nexit 0\n".utf8)
+                    .write(to: scriptURL, options: .atomic)
+                try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+            } catch {
+                // 写入失败仍要尝试停止并卸载；只有后面的完整清理成功才算关闭完成。
+                AppLogger.shared.logError("预先停用旧重签脚本失败，将继续停止并卸载任务", error: error)
+            }
+        }
+
+        do {
+            // plist 可能已经被删除，但对应任务仍在运行，不能按文件是否存在跳过此屏障。
+            try await stopTask()
+            try removeIfPresent(agentPlistURL)
+            try removeIfPresent(scriptURL)
+            defaults.removeObject(forKey: policyErrorDefaultsKey)
+            if hadInstallation || wasEnabled {
+                AppLogger.shared.log("当前系统不支持开机自动重签名，旧登录任务已停止并卸载")
+            }
+            return true
+        } catch {
+            defaults.set(error.localizedDescription, forKey: policyErrorDefaultsKey)
+            throw error
+        }
+    }
+
+    private static func removeIfPresent(_ url: URL) throws {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            // 幂等清理，也允许启动检查与签名操作同时等待同一个停止屏障。
+        }
     }
 
     /// 旧脚本可能已读完记录并准备原地重签。仅更新脚本或记录不能取消它，
@@ -120,6 +195,7 @@ enum AutoResignInstaller {
     }
 
     static func install() throws {
+        guard isSupported else { throw InstallError.unsupportedSystem }
         let fm = FileManager.default
         let appSupportDirURL = appSupportDir
 
@@ -216,12 +292,15 @@ enum AutoResignInstaller {
     }
 
     enum InstallError: LocalizedError {
+        case unsupportedSystem
         case scriptNotFound
         case launchAgentLoadFailed
         case backgroundTaskStillRunning
 
         var errorDescription: String? {
             switch self {
+            case .unsupportedSystem:
+                return "macOS 27 及以上不支持开机自动重签名，以免影响应用启动。请在应用内查看签名修复步骤。".localized
             case .scriptNotFound:
                 return "找不到重签名脚本，安装失败".localized
             case .launchAgentLoadFailed:

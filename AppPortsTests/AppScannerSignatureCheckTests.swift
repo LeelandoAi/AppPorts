@@ -107,7 +107,7 @@ struct AppScannerSignatureCheckTests {
         #expect(result.isEmpty)
     }
 
-    @Test("codesign 没查出来（超时/失败）时不删备份，也不当成「签名已恢复」")
+    @Test("检查超时保留备份和待检查状态，不报告已替换或已恢复")
     func keepsBackupWhenSignatureProbeIsInconclusive() async throws {
         let workspace = try Workspace()
         defer { workspace.cleanup() }
@@ -116,12 +116,17 @@ struct AppScannerSignatureCheckTests {
         let app = try workspace.makeApp(in: root, named: "Slow.app", identifier: "com.appports.tests.slow", adHoc: true)
         try workspace.writeBackup(bundleID: "com.appports.tests.slow", identity: Self.developerIdentity, originalPath: app.path)
 
-        // 外置盘繁忙时 codesign 会超时。以前这种情况被当成「不是 ad-hoc」，
-        // 于是备份被删掉、修复入口消失；现在必须保持原判。
+        // 外置盘繁忙不能成为签名被替换的证据，也不能删除恢复材料。
         let scanner = AppScanner(backupDirectoryURL: workspace.backups, adHocProbe: { _ in nil })
         let result = await scanner.signatureReplacedApps(searchRoots: [root])
 
-        #expect(result.map(\.displayName) == ["Slow.app"])
+        #expect(result.isEmpty)
+        let apps = await scanner.scanLocalApps(at: root, runningAppURLs: [])
+        let scanned = try #require(apps.first)
+        #expect(scanned.signatureCheckUnavailable)
+        #expect(scanned.needsSignatureAttention)
+        #expect(!scanned.signatureReplaced)
+        #expect(!scanned.isResigned)
         #expect(
             FileManager.default.fileExists(
                 atPath: workspace.backups.appendingPathComponent("com.appports.tests.slow.plist").path
@@ -142,12 +147,66 @@ struct AppScannerSignatureCheckTests {
         let scanner = AppScanner(backupDirectoryURL: workspace.backups)
         let result = await scanner.signatureReplacedApps(searchRoots: [root])
 
-        #expect(result.map(\.displayName) == ["Broken.app"])
+        #expect(result.isEmpty)
+        let status = await scanner.checkSigningStatus(bundleURL: app)
+        #expect(status == .unavailable)
         #expect(
             FileManager.default.fileExists(
                 atPath: workspace.backups.appendingPathComponent("com.appports.tests.broken.plist").path
             )
         )
+    }
+
+    @Test("启动壳也有备份时仍只检查真实应用")
+    func ignoresStubSignatureWhenBothHaveBackups() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let root = try workspace.makeSearchRoot()
+        let external = workspace.root.appendingPathComponent("External")
+        try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+        let realApp = try workspace.makeApp(in: external, named: "Original.app", identifier: "com.appports.tests.original", adHoc: false)
+        let stub = try workspace.makeApp(in: root, named: "Original.app", identifier: "com.appports.tests.original.appports.stub", adHoc: true)
+        try (realApp.path + "\n").write(to: stub.appendingPathComponent("Contents/Resources/real_app_path.txt"), atomically: true, encoding: .utf8)
+        try workspace.writeBackup(bundleID: "com.appports.tests.original", identity: Self.developerIdentity, originalPath: realApp.path)
+        try workspace.writeBackup(bundleID: "com.appports.tests.original.appports.stub", identity: Self.developerIdentity, originalPath: stub.path)
+
+        let scanner = AppScanner(backupDirectoryURL: workspace.backups)
+        let result = await scanner.signatureReplacedApps(searchRoots: [root])
+        #expect(result.isEmpty)
+        let status = await scanner.checkSigningStatus(bundleURL: stub)
+        #expect(status == .clean)
+    }
+
+    @Test("外置应用不可读时保留待检查入口，不检查本地启动壳")
+    func keepsRecoveryEntryForUnavailableExternalApp() async throws {
+        let workspace = try Workspace()
+        defer { workspace.cleanup() }
+        let root = try workspace.makeSearchRoot()
+        let missing = workspace.root.appendingPathComponent("Offline/Example.app")
+        let stub = try workspace.makeApp(in: root, named: "Example.app", identifier: "com.appports.tests.offline.appports.stub", adHoc: true)
+        try missing.path.write(to: stub.appendingPathComponent("Contents/Resources/real_app_path.txt"), atomically: true, encoding: .utf8)
+        try workspace.writeBackup(bundleID: "com.appports.tests.offline", identity: Self.developerIdentity, originalPath: missing.path)
+
+        let scanner = AppScanner(backupDirectoryURL: workspace.backups, adHocProbe: { _ in
+            Issue.record("真实应用离线时不应探测启动壳的签名")
+            return true
+        })
+        let status = await scanner.checkSigningStatus(bundleURL: stub)
+        #expect(status == .unavailable)
+        let result = await scanner.signatureReplacedApps(searchRoots: [root])
+        #expect(result.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: workspace.backups.appendingPathComponent("com.appports.tests.offline.plist").path))
+    }
+
+    @Test("签名状态改变会触发应用列表刷新")
+    func signatureStateAffectsEquality() {
+        let original = AppItem(name: "Example.app", path: URL(fileURLWithPath: "/Applications/Example.app"), status: AppStatus.local)
+        var changed = original
+        changed.signatureCheckUnavailable = true
+        #expect(original != changed)
+        changed = original
+        changed.signatureReplaced = true
+        #expect(original != changed)
     }
 
     // MARK: - 夹具

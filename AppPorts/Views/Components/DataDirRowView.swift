@@ -132,10 +132,51 @@ struct DataDirRowView: View {
         }
     }
 
-    // MARK: - 子视图
+    private var operationButtons: some View {
+        DataDirOperationButtons(
+            item: item,
+            onMigrate: onMigrate,
+            onRestore: onRestore,
+            onManageExistingLink: onManageExistingLink,
+            onNormalizeManagedLink: onNormalizeManagedLink,
+            onRelinkExternalData: onRelinkExternalData,
+            onMountMigrate: onMountMigrate,
+            onMount: onMount,
+            onUnmount: onUnmount,
+            onMountRestore: onMountRestore,
+            classicModeActive: classicModeActive
+        )
+    }
+
+    private var iconColor: Color {
+        switch item.priority {
+        case .critical:    return .red
+        case .recommended: return .orange
+        case .optional:    return .blue
+        }
+    }
+}
+
+/// Shared by tool rows and the selected application directory's detail area.
+struct DataDirOperationButtons: View {
+    let item: DataDirItem
+    let onMigrate: (DataDirItem) -> Void
+    let onRestore: (DataDirItem) -> Void
+    let onManageExistingLink: (DataDirItem) -> Void
+    let onNormalizeManagedLink: (DataDirItem) -> Void
+    let onRelinkExternalData: (DataDirItem) -> Void
+    /// 挂载迁移相关操作（仅应用数据页的沙盒应用容器项使用）
+    var onMountMigrate: ((DataDirItem) -> Void)? = nil
+    var onMount: ((DataDirItem) -> Void)? = nil
+    var onUnmount: ((DataDirItem) -> Void)? = nil
+    var onMountRestore: ((DataDirItem) -> Void)? = nil
+    /// 经典模式：容器目录同时提供符号链接「迁移」
+    var classicModeActive: Bool = false
+    /// 行内保留全部直接操作，次要操作使用图标以节省名称空间。
+    var inline = false
 
     @ViewBuilder
-    private var operationButtons: some View {
+    var body: some View {
         if DataDirStatus.mountStatuses.contains(item.status) {
             mountOperationButtons
         } else if item.status == "已链接" {
@@ -147,8 +188,8 @@ struct DataDirRowView: View {
                 }
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, inline ? 8 : 10)
+                .padding(.vertical, inline ? 7 : 5)
                 .background(
                     Capsule().fill(Color.orange)
                 )
@@ -170,8 +211,8 @@ struct DataDirRowView: View {
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, inline ? 8 : 10)
+                    .padding(.vertical, inline ? 7 : 5)
                     .background(
                         Capsule().fill(Color.mint)
                     )
@@ -188,8 +229,8 @@ struct DataDirRowView: View {
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, inline ? 8 : 10)
+                    .padding(.vertical, inline ? 7 : 5)
                     .background(
                         Capsule().fill(Color.teal)
                     )
@@ -211,8 +252,8 @@ struct DataDirRowView: View {
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, inline ? 8 : 10)
+                    .padding(.vertical, inline ? 7 : 5)
                     .background(
                         Capsule().fill(Color.indigo)
                     )
@@ -227,28 +268,29 @@ struct DataDirRowView: View {
                     Button(action: { onMigrate(item) }) {
                         HStack(spacing: 5) {
                             Image(systemName: "arrow.right.circle")
-                            Text("迁移".localized)
+                            if !inline { Text("迁移".localized) }
                         }
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.accentColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
+                        .padding(.horizontal, inline ? 8 : 10)
+                        .padding(.vertical, inline ? 7 : 5)
                         .background(Capsule().stroke(Color.accentColor.opacity(0.6), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("迁移".localized)
                     .help("经典模式：用符号链接迁移（不推荐）".localized)
                 }
                 Button(action: { onMountMigrate(item) }) {
                     HStack(spacing: 5) {
                         Image(systemName: "externaldrive.fill.badge.plus")
-                        Text("挂载迁移".localized)
+                        Text(classicModeActive ? "挂载迁移".localized : "迁移".localized)
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, inline ? 8 : 10)
+                    .padding(.vertical, inline ? 7 : 5)
                     .background(
-                        Capsule().fill(Color.purple)
+                        Capsule().fill(Color.accentColor)
                     )
                 }
                 .buttonStyle(.plain)
@@ -267,8 +309,8 @@ struct DataDirRowView: View {
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, inline ? 8 : 10)
+                    .padding(.vertical, inline ? 7 : 5)
                     .background(
                         Capsule().fill(Color.accentColor)
                     )
@@ -287,29 +329,33 @@ struct DataDirRowView: View {
                 Button(action: { onUnmount(item) }) {
                     HStack(spacing: 5) {
                         Image(systemName: "eject.fill")
-                        Text("卸载".localized)
+                            .font(.system(size: inline ? 14 : 12))
+                        if !inline { Text("卸载".localized) }
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, inline ? 8 : 10)
+                    .padding(.vertical, inline ? 7 : 5)
                     .background(Capsule().fill(Color.gray))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("卸载".localized)
                 .help("卸载外置卷。卸载后应用会看到空目录，请在拔盘前先退出应用".localized)
             } else if item.status == DataDirStatus.pendingMount, let onMount {
                 Button(action: { onMount(item) }) {
                     HStack(spacing: 5) {
                         Image(systemName: "externaldrive.fill.badge.checkmark")
-                        Text("挂载".localized)
+                            .font(.system(size: inline ? 14 : 12))
+                        if !inline { Text("挂载".localized) }
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, inline ? 8 : 10)
+                    .padding(.vertical, inline ? 7 : 5)
                     .background(Capsule().fill(Color.purple))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("挂载".localized)
                 .help("把外置卷重新挂载到此目录".localized)
             }
 
@@ -326,8 +372,8 @@ struct DataDirRowView: View {
                     }
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, inline ? 8 : 10)
+                    .padding(.vertical, inline ? 7 : 5)
                     .background(Capsule().fill(Color.orange))
                 }
                 .buttonStyle(.plain)
@@ -336,13 +382,6 @@ struct DataDirRowView: View {
         }
     }
 
-    private var iconColor: Color {
-        switch item.priority {
-        case .critical:    return .red
-        case .recommended: return .orange
-        case .optional:    return .blue
-        }
-    }
 }
 
 // MARK: - 优先级标签
@@ -378,18 +417,20 @@ struct PriorityBadge: View {
 
 struct DataDirStatusBadge: View {
     let status: String
+    var compact = true
+    var isEmphasized = false
 
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: statusIcon)
-                .font(.system(size: 8))
+                .font(.system(size: compact ? 8 : 10))
             Text(DataDirStatus.localized(status))
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: compact ? 10 : 11, weight: .medium))
         }
-        .foregroundColor(foregroundColor)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(backgroundColor)
+        .foregroundColor(isEmphasized ? .white : foregroundColor)
+        .padding(.horizontal, compact ? 7 : 8)
+        .padding(.vertical, compact ? 3 : 4)
+        .background(isEmphasized ? Color.white.opacity(0.16) : backgroundColor)
         .clipShape(Capsule())
     }
 

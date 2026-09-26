@@ -4,6 +4,167 @@ import Testing
 
 @Suite("Background signing coordination", .serialized)
 struct AutoResignInstallerTests {
+    @Test("Login re-signing is restricted to systems before macOS 27", arguments: [
+        (12, true), (15, true), (26, true), (27, false), (28, false), (99, false), (0, false)
+    ])
+    func systemSupport(majorVersion: Int, supported: Bool) {
+        #expect(AutoResignInstaller.supportsLoginResigning(macOSMajorVersion: majorVersion) == supported)
+    }
+
+    @Test("Older systems retain existing login settings and files", arguments: [true, false])
+    func preservesOlderSystem(enabled: Bool) async throws {
+        let fixture = try PolicyFixture()
+        defer { fixture.cleanup() }
+        fixture.defaults.set(enabled, forKey: AutoResignInstaller.enabledDefaultsKey)
+        var stopCalls = 0
+
+        let disabled = try await fixture.apply(majorVersion: 26) { stopCalls += 1 }
+
+        #expect(!disabled)
+        #expect(stopCalls == 0)
+        #expect(fixture.defaults.bool(forKey: AutoResignInstaller.enabledDefaultsKey) == enabled)
+        #expect(try String(contentsOf: fixture.script, encoding: .utf8) == PolicyFixture.oldScript)
+        #expect(FileManager.default.fileExists(atPath: fixture.agent.path))
+    }
+
+    @Test("Upgrading clears both stored and legacy-default opt-ins", arguments: [true, false, nil] as [Bool?])
+    func disablesExistingInstallation(previousSetting: Bool?) async throws {
+        let fixture = try PolicyFixture()
+        defer { fixture.cleanup() }
+        fixture.defaults.set(previousSetting, forKey: AutoResignInstaller.enabledDefaultsKey)
+        var stopCalls = 0
+
+        let disabled = try await fixture.apply(majorVersion: 27) {
+            stopCalls += 1
+            #expect(!fixture.defaults.bool(forKey: AutoResignInstaller.enabledDefaultsKey))
+            // Keep the plist and a harmless script until the running process group has exited.
+            #expect(FileManager.default.fileExists(atPath: fixture.agent.path))
+            let guardedScript = try String(contentsOf: fixture.script, encoding: .utf8)
+            #expect(guardedScript.contains("exit 0"))
+            #expect(!guardedScript.contains("codesign"))
+        }
+
+        #expect(disabled)
+        #expect(stopCalls == 1)
+        #expect(!FileManager.default.fileExists(atPath: fixture.agent.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.script.path))
+        #expect(fixture.defaults.object(forKey: AutoResignInstaller.enabledDefaultsKey) as? Bool == false)
+        #expect(try String(contentsOf: fixture.backup, encoding: .utf8) == "keep signature backup")
+        #expect(try String(contentsOf: fixture.mountAgent, encoding: .utf8) == "keep mount agent")
+    }
+
+    @Test("A loaded task must be checked even after its plist is gone")
+    func stopsOrphanedTask() async throws {
+        let fixture = try PolicyFixture()
+        defer { fixture.cleanup() }
+        try FileManager.default.removeItem(at: fixture.agent)
+        try FileManager.default.removeItem(at: fixture.script)
+        fixture.defaults.set(true, forKey: AutoResignInstaller.enabledDefaultsKey)
+        var stopCalls = 0
+
+        try await fixture.apply(majorVersion: 28) { stopCalls += 1 }
+        try await fixture.apply(majorVersion: 28) { stopCalls += 1 }
+
+        #expect(stopCalls == 2)
+        #expect(!fixture.defaults.bool(forKey: AutoResignInstaller.enabledDefaultsKey))
+        #expect(!FileManager.default.fileExists(atPath: fixture.script.path))
+        #expect(fixture.defaults.string(forKey: AutoResignInstaller.policyErrorDefaultsKey) == nil)
+    }
+
+    @Test("A failed stop retains a harmless script and exposes an error until retry succeeds")
+    func stopFailureAndRetry() async throws {
+        let fixture = try PolicyFixture()
+        defer { fixture.cleanup() }
+        fixture.defaults.set(true, forKey: AutoResignInstaller.enabledDefaultsKey)
+
+        await #expect(throws: AutoResignInstaller.InstallError.self) {
+            try await fixture.apply(majorVersion: 27) {
+                throw AutoResignInstaller.InstallError.backgroundTaskStillRunning
+            }
+        }
+
+        #expect(!fixture.defaults.bool(forKey: AutoResignInstaller.enabledDefaultsKey))
+        #expect(fixture.defaults.string(forKey: AutoResignInstaller.policyErrorDefaultsKey)?.isEmpty == false)
+        #expect(FileManager.default.fileExists(atPath: fixture.agent.path))
+        let result = try await ProcessCommandRunner().run(executable: "/bin/bash", arguments: [fixture.script.path], timeout: 5)
+        #expect(result.status == 0)
+        #expect(!result.timedOut)
+
+        try await fixture.apply(majorVersion: 27) {}
+        #expect(fixture.defaults.string(forKey: AutoResignInstaller.policyErrorDefaultsKey) == nil)
+        #expect(!FileManager.default.fileExists(atPath: fixture.agent.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.script.path))
+    }
+
+    @Test("Failed plist removal keeps the disabled script for the next login")
+    func cleanupFailureRetainsGuard() async throws {
+        // Root ignores these fixture permissions; normal test hosts run as the logged-in user.
+        guard getuid() != 0 else { return }
+        let fixture = try PolicyFixture()
+        defer { fixture.cleanup() }
+        let agentDirectory = fixture.agent.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: agentDirectory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: agentDirectory.path) }
+        var stopCalls = 0
+
+        await #expect(throws: (any Error).self) {
+            try await fixture.apply(majorVersion: 27) { stopCalls += 1 }
+        }
+
+        #expect(stopCalls == 1)
+        #expect(FileManager.default.fileExists(atPath: fixture.agent.path))
+        #expect(try String(contentsOf: fixture.script, encoding: .utf8).contains("exit 0"))
+        #expect(fixture.defaults.string(forKey: AutoResignInstaller.policyErrorDefaultsKey)?.isEmpty == false)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: agentDirectory.path)
+        try await fixture.apply(majorVersion: 27) {}
+        #expect(!FileManager.default.fileExists(atPath: fixture.agent.path))
+        #expect(fixture.defaults.string(forKey: AutoResignInstaller.policyErrorDefaultsKey) == nil)
+    }
+
+    @Test("The login script rejects unsupported or unknown systems before any signing work", arguments: [
+        ("26.6", true), ("15.7.3", true), ("27.0", false), ("28.1", false),
+        ("", false), ("unknown", false), ("0", false), ("999999999999999999999", false)
+    ])
+    func loginScriptVersionGuard(version: String, mayContinue: Bool) async throws {
+        try await checkLoginScript(version: version, versionCommandStatus: 0, mayContinue: mayContinue)
+    }
+
+    @Test("A failed version query cannot start login re-signing")
+    func loginScriptVersionQueryFailure() async throws {
+        try await checkLoginScript(version: "26.6", versionCommandStatus: 1, mayContinue: false)
+    }
+
+    private func checkLoginScript(version: String, versionCommandStatus: Int, mayContinue: Bool) async throws {
+        let fixture = try PolicyFixture()
+        defer { fixture.cleanup() }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("AppPorts/AppPorts-ReSign.sh")
+        var script = try String(contentsOf: source, encoding: .utf8)
+        let versionProbe = fixture.root.appendingPathComponent("fake-sw-vers")
+        let reachedWork = fixture.root.appendingPathComponent("reached-signing-work")
+        let isolatedScript = fixture.root.appendingPathComponent("login-script.sh")
+
+        func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+        try "#!/bin/bash\nprintf '%s\\n' \(quote(version))\nexit \(versionCommandStatus)\n"
+            .write(to: versionProbe, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: versionProbe.path)
+
+        let versionCommand = "/usr/bin/sw_vers -productVersion"
+        let workStart = "BACKUP_DIR=\"$HOME/Library/Application Support/AppPorts/signature-backups\""
+        try #require(script.contains(versionCommand))
+        try #require(script.contains(workStart))
+        script = script.replacingOccurrences(of: versionCommand, with: quote(versionProbe.path) + " -productVersion")
+        // Instrument the real script's first work statement, then exit before it can read or mutate user data.
+        script = script.replacingOccurrences(of: workStart, with: "printf reached > \(quote(reachedWork.path))\nexit 47\n" + workStart)
+        try ("CLASSIC_MODE=1\n" + script).write(to: isolatedScript, atomically: true, encoding: .utf8)
+
+        let result = try await ProcessCommandRunner().run(executable: "/bin/bash", arguments: [isolatedScript.path], timeout: 5)
+        #expect(!result.timedOut)
+        #expect(result.status == (mayContinue ? 47 : 0))
+        #expect(FileManager.default.fileExists(atPath: reachedWork.path) == mayContinue)
+    }
+
     @Test("An explicitly absent login task needs no stop command")
     func absentTask() async throws {
         let runner = Runner(responses: [.result(status: 113, text: "Could not find service")])
@@ -44,6 +205,45 @@ struct AutoResignInstallerTests {
         let runner = Runner(responses: [.result(text: "pid = 99999"), .result(text: "--wait"), .result(timedOut: true)])
         await #expect(throws: AutoResignInstaller.InstallError.self) {
             try await AutoResignInstaller.stopBackgroundTask(runner: runner, processGroupIsRunning: { _ in false })
+        }
+    }
+
+    private struct PolicyFixture {
+        static let oldScript = "#!/bin/bash\n# Old login codesign task\nexit 73\n"
+        let root: URL
+        let defaults: UserDefaults
+        let suiteName: String
+        var agent: URL { root.appendingPathComponent("LaunchAgents/com.shimoko.AppPorts.re-sign.plist") }
+        var mountAgent: URL { root.appendingPathComponent("LaunchAgents/com.shimoko.AppPorts.container-mount.plist") }
+        var script: URL { root.appendingPathComponent("AppPorts/AppPorts-ReSign.sh") }
+        var backup: URL { root.appendingPathComponent("AppPorts/signature-backups/keep.plist") }
+
+        init() throws {
+            suiteName = "AppPortsAutoResignTests-" + UUID().uuidString
+            defaults = try #require(UserDefaults(suiteName: suiteName))
+            root = FileManager.default.temporaryDirectory.appendingPathComponent(suiteName)
+            try FileManager.default.createDirectory(at: agent.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("old login agent".utf8).write(to: agent)
+            try Data(Self.oldScript.utf8).write(to: script)
+            try Data("keep signature backup".utf8).write(to: backup)
+            try Data("keep mount agent".utf8).write(to: mountAgent)
+        }
+
+        @discardableResult
+        func apply(majorVersion: Int, stop: () async throws -> Void) async throws -> Bool {
+            try await AutoResignInstaller.disableIfUnsupported(
+                macOSMajorVersion: majorVersion,
+                defaults: defaults,
+                agentPlistURL: agent,
+                scriptURL: script,
+                stopTask: stop
+            )
+        }
+
+        func cleanup() {
+            defaults.removePersistentDomain(forName: suiteName)
+            try? FileManager.default.removeItem(at: root)
         }
     }
 

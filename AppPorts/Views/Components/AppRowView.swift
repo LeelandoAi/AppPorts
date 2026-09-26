@@ -29,33 +29,24 @@ struct AppRowView: View {
         HStack(spacing: 14) {
             AppIconView(url: app.displayURL)
             
-            VStack(alignment: .leading, spacing: 4) {
-                Text(app.displayName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                
-                HStack(spacing: 8) {
-                    StatusBadge(app: app, onRepairSignature: onRepairSignature)
-                    
-                    if let size = app.size {
-                        Text(size)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .transition(.opacity)
-                    } else {
-                        Text("计算中...".localized)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary.opacity(0.5))
-                            .lineLimit(1)
-                            .fixedSize()
-                            .transition(.opacity)
-                    }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(app.displayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(app.size ?? "计算中...".localized)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
+                        .fixedSize()
                 }
+                StatusBadge(app: app, onRepairSignature: onRepairSignature)
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(
                 Text(app.displayName) + Text(", ") +
@@ -63,56 +54,11 @@ struct AppRowView: View {
                 (app.size.map { Text(", \($0)") } ?? Text(verbatim: ""))
             )
             
-            Spacer()
-
-            // 签名被替换的应用：把修复入口直接摆在行末。多数用户不会去右键菜单里找。
-            if app.signatureReplaced, let onRepairSignature {
-                Button(action: { onRepairSignature(app) }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "wrench.and.screwdriver.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("修复".localized)
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(Color.red)
-                    .clipShape(Capsule())
-                    .lineLimit(1)
-                    .fixedSize()
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("查看修复步骤".localized)
-                .help("查看修复步骤".localized)
-            }
-            
-            if showDeleteLinkButton && (app.status == AppStatus.linked || app.status == AppStatus.orphanedLink) {
-                Button(action: { onDeleteLink(app) }) {
-                    Image(systemName: "trash")
-                        .foregroundColor(.red)
-                }
-                .buttonStyle(.plain)
-                .padding(6)
-                .background(Color.red.opacity(0.1))
-                .clipShape(Circle())
-                .accessibilityLabel("断开此链接并删除文件".localized)
-                .help("断开此链接并删除文件".localized)
-            }
-            
-            if showMoveBackButton {
-                Button(action: { onMoveBack(app) }) {
-                    Image(systemName: "arrow.uturn.backward")
-                    .foregroundColor(.blue)
-                }
-                .buttonStyle(.plain)
-                .padding(6)
-                .background(Color.blue.opacity(0.1))
-                .clipShape(Circle())
-                .accessibilityLabel("将应用迁移回本地".localized)
-                .help("将应用迁移回本地".localized)
-            }
+            rowActions
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 10)
         .padding(.horizontal, 12)
         .background(
@@ -154,9 +100,9 @@ struct AppRowView: View {
                 }
             }
 
-            if app.signatureReplaced, let onRepairSignature {
+            if app.needsSignatureAttention, let onRepairSignature {
                 Divider()
-                Button("查看修复步骤".localized) {
+                Button(signatureActionTitle) {
                     onRepairSignature(app)
                 }
             }
@@ -164,7 +110,7 @@ struct AppRowView: View {
             // 应用本体迁移后弹「已损坏」时的兜底；签名已被替换的应用再签只会更糟，不提供。
             if !app.isFolder,
                !app.isSystemApp,
-               !app.signatureReplaced,
+               !app.needsSignatureAttention,
                app.status != AppStatus.orphanedLink,
                app.displayURL.pathExtension.lowercased() == "app",
                let onResign {
@@ -175,7 +121,7 @@ struct AppRowView: View {
                 .disabled(app.isRunning)
             }
 
-            if let onRestoreSignature, app.isResigned {
+            if let onRestoreSignature, app.isResigned || app.signatureCheckUnavailable {
                 Divider()
                 Button("恢复原始签名".localized) {
                     onRestoreSignature(app)
@@ -183,4 +129,71 @@ struct AppRowView: View {
             }
         }
     }
+
+    private var signatureActionTitle: String {
+        app.signatureCheckUnavailable ? "检查签名".localized : "查看修复步骤".localized
+    }
+
+    private var rowActions: some View {
+        HStack(spacing: 8) {
+            if app.needsSignatureAttention, let onRepairSignature {
+                Button(action: { onRepairSignature(app) }) {
+                    Label(app.signatureCheckUnavailable ? "检查签名".localized : "修复".localized,
+                          systemImage: app.signatureCheckUnavailable ? "arrow.clockwise" : "wrench.and.screwdriver")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                        .background(Color.primary.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.primary.opacity(0.12)))
+                        .contentShape(RoundedRectangle(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(signatureActionTitle)
+                .help(signatureActionTitle)
+            }
+
+            if showMoveBackButton {
+                Button(action: { onMoveBack(app) }) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 13))
+                        .foregroundColor(.blue)
+                        .frame(width: 28, height: 28)
+                        .background(Color.blue.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("将应用迁移回本地".localized)
+                .help("将应用迁移回本地".localized)
+            }
+
+            // 固定末列宽度，其他操作和标签数量不会改变删除按钮的位置。
+            if showDeleteLinkButton {
+                Group {
+                    if app.status == AppStatus.linked || app.status == AppStatus.orphanedLink {
+                        Button(action: { onDeleteLink(app) }) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 13))
+                                .foregroundColor(.red)
+                                .frame(width: 28, height: 28)
+                                .background(Color.red.opacity(0.06))
+                                .clipShape(RoundedRectangle(cornerRadius: 7))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("断开此链接并删除文件".localized)
+                        .help("断开此链接并删除文件".localized)
+                    } else {
+                        Color.clear
+                            .accessibilityHidden(true)
+                    }
+                }
+                .frame(width: 28, height: 28)
+            }
+        }
+        .frame(height: 28)
+    }
+
 }

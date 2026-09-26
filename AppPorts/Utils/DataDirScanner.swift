@@ -76,14 +76,19 @@ private let directorySizeCache: NSCache<NSString, NSNumber> = {
 
 /// 缓存键带上当前挂载状态。挂载点被挂上或卸下时目录内容会整体替换，
 /// 状态一变就等于缓存失效，不会把卸载前那份旧大小继续报给界面。
-private func sizeCacheKey(for url: URL, isMountPoint: Bool) -> NSString {
-    "\(url.standardizedFileURL.path)|\(isMountPoint ? "mount" : "plain")" as NSString
+private func sizeCacheKey(for path: String, isMountPoint: Bool) -> NSString {
+    "\(path)|\(isMountPoint ? "mount" : "plain")" as NSString
 }
 
-/// 清除指定路径的大小缓存（两种挂载状态一起清）
+/// 子目录内容变更也会改变所有父目录的总大小，两种挂载状态的缓存都要失效。
 func invalidateSizeCache(for url: URL) {
-    directorySizeCache.removeObject(forKey: sizeCacheKey(for: url, isMountPoint: true))
-    directorySizeCache.removeObject(forKey: sizeCacheKey(for: url, isMountPoint: false))
+    var path = url.standardizedFileURL.path
+    while !path.isEmpty {
+        directorySizeCache.removeObject(forKey: sizeCacheKey(for: path, isMountPoint: true))
+        directorySizeCache.removeObject(forKey: sizeCacheKey(for: path, isMountPoint: false))
+        guard path != "/" else { break }
+        path = (path as NSString).deletingLastPathComponent
+    }
 }
 
 /// 清除全部大小缓存
@@ -100,7 +105,7 @@ func fastDirectorySize(
     fileManager: FileManager = .default,
     isMountPoint: (URL) -> Bool = { DiskUtility.isMountPoint($0) }
 ) -> Int64 {
-    let cacheKey = sizeCacheKey(for: url, isMountPoint: isMountPoint(url))
+    let cacheKey = sizeCacheKey(for: url.standardizedFileURL.path, isMountPoint: isMountPoint(url))
     if let cached = directorySizeCache.object(forKey: cacheKey) {
         return cached.int64Value
     }
@@ -1471,6 +1476,12 @@ actor DataDirScanner {
         var exactMatches = Set<String>()
         var containsMatches: [String] = []
         var shortPrefixMatches: [String] = []
+        // 地区、平台和版本词既不能作为 Bundle ID 后缀，也不能从应用名中拆出后模糊匹配。
+        // 例如 Trae CN 的「CN」不是应用身份，不能因此关联 cn.wps.* 的容器。
+        let genericMatchTerms: Set<String> = [
+            "app", "com", "org", "net", "io", "dev", "cn", "us", "uk", "de", "fr", "jp", "kr",
+            "mac", "macos", "osx", "desktop", "client", "helper", "dmg", "pkg", "free", "pro", "lite", "beta", "ide"
+        ]
 
         let cleanedAppName = appName.trimmingCharacters(in: .whitespacesAndNewlines)
         let strippedVariants = strippedNameVariants(for: cleanedAppName)
@@ -1483,7 +1494,7 @@ actor DataDirScanner {
             }
         }
 
-        for token in strippedVariants.flatMap({ tokens(from: $0) }) {
+        for token in strippedVariants.flatMap({ tokens(from: $0) }) where !genericMatchTerms.contains(token.lowercased()) {
             if token.count <= 3 {
                 shortPrefixMatches.append(token)
             } else {
@@ -1498,14 +1509,10 @@ actor DataDirScanner {
             if components.count >= 2 {
                 // 通用 TLD / 平台 / 打包词汇，作为 containsMatch 会造成大范围误匹配
                 // （如 com.termius-dmg.mac 的 "mac" 会命中 com.tencent.QQMusicMac）。
-                let genericSuffixes: Set<String> = [
-                    "app", "com", "org", "net", "io", "dev", "cn", "us", "uk", "de", "fr", "jp", "kr",
-                    "mac", "macos", "osx", "desktop", "client", "helper", "dmg", "pkg", "free", "pro", "lite", "beta"
-                ]
                 for index in 1..<components.count {
                     let suffix = components[index...].joined(separator: ".")
                     // 跳过纯通用后缀（如 "app"、"mac"）和由通用词汇组成的多段后缀
-                    if components[index...].allSatisfy({ genericSuffixes.contains($0.lowercased()) }) {
+                    if components[index...].allSatisfy({ genericMatchTerms.contains($0.lowercased()) }) {
                         continue
                     }
                     // 单段后缀必须足够独特；短于 4 个字符的单词（"mac"、"ide"）几乎必然误匹配

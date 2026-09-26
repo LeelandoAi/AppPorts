@@ -37,7 +37,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 应用可能被移动过：校准登录代理指向的程序，免得它指向一个已经不存在的路径。
         Task.detached(priority: .utility) {
             do { try await AutoResignInstaller.refreshInstalledScriptIfNeeded() }
-            catch { AppLogger.shared.logError("更新开机重签脚本失败", error: error) }
+            catch {
+                AppLogger.shared.logError(
+                    "更新开机重签设置失败",
+                    error: error,
+                    errorCode: "AUTO-RESIGN-POLICY-FAILED"
+                )
+            }
             await ContainerMountAgentInstaller.refreshAtLaunch()
         }
     }

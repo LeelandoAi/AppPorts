@@ -3,10 +3,19 @@
 # Runs at user login to re-sign migrated apps whose ad-hoc signatures
 # may have been invalidated by macOS Gatekeeper after restart.
 #
-# Installed by AppPorts → ~/Library/Application Support/AppPorts/re-sign-at-login.sh
+# Installed by AppPorts → ~/Library/Application Support/AppPorts/AppPorts-ReSign.sh
 # Triggered by      → ~/Library/LaunchAgents/com.shimoko.AppPorts.re-sign.plist
 
 set -euo pipefail
+
+# 登录任务可能先于 AppPorts 启动；必须在读取偏好、备份或修改文件前检查系统版本。
+# 无法识别版本时也跳过。经典模式不能绕过开机重签的版本限制。
+SYSTEM_VERSION=$(/usr/bin/sw_vers -productVersion 2>/dev/null) || exit 0
+SYSTEM_MAJOR="${SYSTEM_VERSION%%.*}"
+case "$SYSTEM_MAJOR" in
+    [1-9]|1[0-9]|2[0-6]) ;;
+    *) exit 0 ;;
+esac
 
 BACKUP_DIR="$HOME/Library/Application Support/AppPorts/signature-backups"
 LOG_DIR="$HOME/Library/Application Support/AppPorts"

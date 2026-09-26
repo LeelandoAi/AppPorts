@@ -862,7 +862,7 @@ struct ContentView: View {
                 subtitle: externalDriveURL?.path ?? "未选择".localized,
                 icon: "externaldrive.fill",
                 actionButtonText: "选择文件夹".localized,
-                onAction: openPanelForExternalDrive,
+                onAction: { _ = openPanelForExternalDrive() },
                 onRefresh: { scanExternalApps() }
             )
 
@@ -1447,7 +1447,8 @@ struct ContentView: View {
         await computeAndStoreSizes(misses: misses, isLocal: isLocal, scanner: scanner, request: request)
     }
 
-    func openPanelForExternalDrive() {
+    @discardableResult
+    func openPanelForExternalDrive() -> URL? {
         let openPanel = NSOpenPanel()
         openPanel.prompt = "选择文件夹".localized
         openPanel.allowsMultipleSelection = false
@@ -1459,8 +1460,10 @@ struct ContentView: View {
             AppLogger.shared.logContext("用户选择外部路径", details: [("path", url.path)])
             // 记录外接硬盘信息
             AppLogger.shared.logExternalDriveInfo(at: url)
+            return url
         } else {
             AppLogger.shared.log("用户取消选择外部路径", level: "TRACE")
+            return nil
         }
     }
 
@@ -2794,7 +2797,7 @@ struct ContentView: View {
 
     private func signatureRepairSheet(for app: AppItem) -> some View {
         SignatureRepairSheet(
-            app: app,
+            app: localApps.first(where: { $0.id == app.id }) ?? app,
             onRestoreSignature: { performRestoreSignature(app: $0) },
             onMoveBack: { performMoveBack(app: $0) },
             onOpenDataDirs: { target in

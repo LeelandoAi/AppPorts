@@ -55,6 +55,8 @@ private func localizedStatusBadgeText(_ text: String) -> String {
         return "已重签名".localized
     case "签名已替换":
         return "签名已替换".localized
+    case "签名待检查":
+        return "签名待检查".localized
     default:
         return text
     }
@@ -231,7 +233,6 @@ struct StatusBadge: View {
             Text(localizedStatusBadgeText(badge.text))
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .lineLimit(1)
-                .fixedSize()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -244,7 +245,30 @@ struct StatusBadge: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        Group {
+            if #available(macOS 13.0, *) {
+                BadgeFlowLayout(spacing: 6) { badgeContent }
+            } else {
+                VStack(alignment: .leading, spacing: 6) { badgeContent }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            signatureAccessibilityLabel +
+            badges.map { localizedStatusBadgeText($0.text) }.joined(separator: ", ")
+        )
+        .accessibilityAddTraits(.isStaticText)
+    }
+
+    private var signatureAccessibilityLabel: String {
+        if app.signatureReplaced { return "签名已替换".localized + ", " }
+        if app.signatureCheckUnavailable { return "签名待检查".localized + ", " }
+        if app.isResigned { return "已重签名".localized + ", " }
+        return ""
+    }
+
+    private var badgeContent: some View {
+        Group {
             ForEach(badges) { badge in
                 if badge.isTappable, let message = badgeInfoMessage(for: badge) {
                     TappableBadge(badge: badge, message: message)
@@ -259,16 +283,15 @@ struct StatusBadge: View {
                     badge: BadgeConfig(text: "签名已替换", icon: "exclamationmark.shield.fill", color: .red, isTappable: true),
                     action: onRepairSignature.map { handler in { handler(app) } }
                 )
+            } else if app.signatureCheckUnavailable {
+                TappableBadge(
+                    badge: BadgeConfig(text: "签名待检查", icon: "questionmark.circle", color: .orange, isTappable: true),
+                    action: onRepairSignature.map { handler in { handler(app) } }
+                )
             } else if app.isResigned {
                 badgeView(for: BadgeConfig(text: "已重签名", icon: "seal.fill", color: .teal, isTappable: false))
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            (app.signatureReplaced ? "签名已替换".localized + ", " : (app.isResigned ? "已重签名".localized + ", " : "")) +
-            badges.map { localizedStatusBadgeText($0.text) }.joined(separator: ", ")
-        )
-        .accessibilityAddTraits(.isStaticText)
     }
 }
 
@@ -288,7 +311,6 @@ private struct TappableBadge: View {
             Text(localizedStatusBadgeText(badge.text))
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .lineLimit(1)
-                .fixedSize()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -313,5 +335,52 @@ private struct TappableBadge: View {
                 .frame(maxWidth: 300)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// 标签在内容列内换行，避免把行尾的操作按钮挤出对齐位置。
+@available(macOS 13.0, *)
+private struct BadgeFlowLayout: Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrangement(width: proposal.width, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrangement(width: bounds.width, subviews: subviews)
+        for index in subviews.indices {
+            subviews[index].place(
+                at: CGPoint(x: bounds.minX + result.positions[index].x, y: bounds.minY + result.positions[index].y),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(result.sizes[index])
+            )
+        }
+    }
+
+    private func arrangement(width: CGFloat?, subviews: Subviews) -> (size: CGSize, positions: [CGPoint], sizes: [CGSize]) {
+        let limit = max(1, width ?? .greatestFiniteMagnitude)
+        var positions: [CGPoint] = []
+        var sizes: [CGSize] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for subview in subviews {
+            let ideal = subview.sizeThatFits(.unspecified)
+            let size = subview.sizeThatFits(ProposedViewSize(width: min(ideal.width, limit), height: nil))
+            if x > 0 && x + size.width > limit {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            positions.append(CGPoint(x: x, y: y))
+            sizes.append(size)
+            usedWidth = max(usedWidth, x + size.width)
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+        }
+        return (CGSize(width: usedWidth, height: y + rowHeight), positions, sizes)
     }
 }

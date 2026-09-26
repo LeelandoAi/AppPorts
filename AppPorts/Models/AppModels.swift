@@ -115,13 +115,17 @@ struct AppItem: Identifiable, Equatable, Sendable {
     /// - Note: iOS 应用通常包含 WrappedBundle 或特定的 Info.plist 标识
     var isIOSApp: Bool = false
 
-    /// 是否已被 AppPorts 重签名
-    /// - Note: 通过检测签名备份 plist 是否存在来判断
+    /// 有 AppPorts 签名备份，且当前签名已确认为 Ad-hoc。
     var isResigned: Bool = false
 
     /// 原始开发者签名已被 Ad-hoc 签名替换：备份记录的原始身份是开发者证书，当前签名却是 ad-hoc。
     /// 这类应用在 macOS 27 上可能无法打开，修复路径是还原数据、重装后再挂载迁移。
     var signatureReplaced: Bool = false
+
+    /// 有恢复记录，但本次无法检查真实应用的签名。不能解释为已替换或已恢复。
+    var signatureCheckUnavailable: Bool = false
+
+    var needsSignatureAttention: Bool { signatureReplaced || signatureCheckUnavailable }
 
     /// 是否为 Electron 应用（含 Electron Framework）
     var isElectronApp: Bool = false
@@ -200,6 +204,8 @@ struct AppItem: Identifiable, Equatable, Sendable {
         lhs.isMASExternal == rhs.isMASExternal &&
         lhs.isIOSApp == rhs.isIOSApp &&
         lhs.isResigned == rhs.isResigned &&
+        lhs.signatureReplaced == rhs.signatureReplaced &&
+        lhs.signatureCheckUnavailable == rhs.signatureCheckUnavailable &&
         lhs.isElectronApp == rhs.isElectronApp &&
         lhs.isSparkleApp == rhs.isSparkleApp &&
         lhs.hasSelfUpdater == rhs.hasSelfUpdater &&
