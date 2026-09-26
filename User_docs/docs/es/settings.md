@@ -2,48 +2,68 @@
 outline: deep
 ---
 
-# Configuración
+# Ajustes
 
-La página de configuración de AppPorts es accesible mediante el icono de engranaje en la esquina superior derecha de la ventana principal.
+Los ajustes de AppPorts se abren desde el icono de engranaje de la esquina superior derecha de la ventana principal.
 
-## Configuración de App Store e iOS
+## Ajustes de App Store e iOS
 
-| Configuración | Descripción | Predeterminado |
-|---------------|-------------|----------------|
-| Migración de Apps App Store | Permite la migración de aplicaciones de App Store. Debe habilitarse manualmente en versiones de macOS inferiores a 15.1 | Desactivado |
-| Migración de Apps iOS | Permite la migración de aplicaciones iOS/iPadOS (versión Mac) | Desactivado |
+| Ajuste | Descripción | Valor predeterminado |
+|------|------|------|
+| Migración de apps de App Store | Permite migrar apps de App Store. En versiones anteriores a macOS 15.1, debe activarse manualmente para migrarlas | Desactivado |
+| Migración de apps de iOS | Permite migrar apps de iOS/iPadOS para Mac | Desactivado |
 
-::: tip 💡 Usuarios de macOS 15.1+
-macOS 15.1 y posteriores soportan la instalación nativa de aplicaciones App Store en discos externos. Se recomienda habilitar "Descargar e instalar aplicaciones grandes en un disco externo" en la configuración de App Store en lugar de usar el interruptor de migración de AppPorts.
+::: tip Usuarios de macOS 15.1+
+macOS 15.1 y posteriores permiten instalar apps de App Store directamente en almacenamiento externo. Es preferible activar «Descargar e instalar apps grandes en un disco distinto» en los ajustes de App Store en lugar de usar la migración manual de AppPorts.
 :::
 
-## Configuración de Firmado
+## Ajustes de firma
 
-| Configuración | Descripción | Predeterminado |
-|---------------|-------------|----------------|
-| Re-firmado Automático | Ejecuta automáticamente el re-firmado Ad-hoc en aplicaciones asociadas después de la migración del directorio de datos | Desactivado |
-| Re-firmado al iniciar sesión | Re-firma automáticamente las apps migradas con firmas caducadas cada vez que el usuario inicia sesión | Activado |
+| Ajuste | Ubicación | Descripción | Valor predeterminado |
+|------|------|------|------|
+| Volver a firmar después de la migración | Barra de herramientas de directorios de datos, **solo en modo clásico** | Vuelve a firmar con Ad-hoc la app asociada tras migrar mediante enlace simbólico | Desactivado |
+| Re-firmado al iniciar sesión | Ajustes | Al iniciar sesión, vuelve a firmar apps cuya copia de seguridad indica que ya tenían firma Ad-hoc, para resolver su invalidación tras reiniciar; omite las apps aisladas, salvo en modo clásico | Desactivado en instalaciones nuevas; sigue activado para quienes ya tenían instalado el agente de inicio de sesión |
 
-Cuando está habilitado, cada migración de directorio de datos hace automáticamente una copia de seguridad de la firma original y ejecuta el re-firmado para evitar mensajes de "Dañado" después de la migración. El re-firmado al iniciar sesión utiliza un LaunchAgent de macOS para ejecutarse automáticamente en segundo plano cada vez que el usuario inicia sesión, garantizando que las firmas caducadas se renueven sin intervención manual.
+Fuera del modo clásico, ninguna opción vuelve a firmar apps aisladas, porque podrían dejar de abrirse en macOS 27. Los datos de contenedores usan [migración por montaje](/es/datamigrae/mount-migration), sin necesidad de cambiar la firma.
 
-::: tip 💡 Re-firmado automático para apps vinculadas
-Para apps vinculadas (estado: "Vinculada"), el re-firmado automático resuelve automáticamente la **ruta real de la app externa** detrás del shell Stub Portal o el enlace simbólico, asegurando que los cambios de firma se apliquen al paquete de aplicación real. La copia de seguridad y el re-firmado se identifican por el Bundle ID de la app real.
-:::
+El script de inicio de sesión omite los registros nuevos con una copia completa de la app original. AppPorts verifica las operaciones de firma y sustituye los archivos de forma segura. El script instalado se sincroniza al abrir la app.
 
-## Configuración de Registro
+«Re-firmado al iniciar sesión» instala el LaunchAgent `com.shimoko.AppPorts.re-sign` y escribe en el registro predeterminado de AppPorts. La firma y la copia de seguridad afectan a la app real del disco externo, no al lanzador local. Consulte [Firma y prevención de cierres inesperados](/es/datamigrae/resign).
 
-| Configuración | Descripción | Predeterminado |
-|---------------|-------------|----------------|
-| Habilitar Registro | Escribe registros de ejecución en archivo | Activado |
-| Tamaño Máximo del Registro | Trunca automáticamente la mitad más antigua cuando el archivo de registro excede este tamaño | 2 MB |
-| Ubicación del Registro | Ruta de guardado del archivo de registro | `~/Library/Application Support/AppPorts/AppPorts_Log.txt` |
+## Modo clásico de migración de datos (no recomendado) {#classic-data-migration-mode}
 
-### Operaciones de Registro
+El interruptor situado al final de los ajustes está desactivado por defecto. Se conserva para quienes ya dependen del método de la versión 1.8.1 y todavía no pueden cambiarlo. Si el disco externo no es APFS, mantenga la situación actual y deje los datos de contenedores en el Mac, en vez de activar este modo para evitar ese requisito. Consulte [Por qué el disco externo debe ser APFS](/es/why-apfs#what-to-do). Antes de activarlo debe marcar «Entiendo estos riesgos» en la confirmación. En macOS 27, un aviso junto al interruptor indica que las apps aisladas firmadas de nuevo podrían no abrirse. Al activarlo:
+
+| Elemento | Desactivado (predeterminado) | Activado |
+|------|------|------|
+| Botones de directorios de contenedores | Solo «Migración por montaje» | «Migrate» mediante enlace simbólico y «Migración por montaje» |
+| Confirmación para volver a firmar antes de migrar un contenedor | No aparece | Aparece, con solo migración como opción predeterminada |
+| Volver a firmar apps aisladas | Se rechaza en todas las opciones | Se permite tras una segunda confirmación que explica las consecuencias |
+| Interruptor «Volver a firmar después de la migración» | Oculto | Visible en la barra de herramientas de directorios de datos |
+| «Normalizar», «Volver a enlazar» y «Detalles del enlace» de contenedores | Desactivados; indica restaurar antes de migrar por montaje | Disponibles |
+
+El modo clásico recupera todo el método anterior, incluidos sus riesgos: las apps aisladas firmadas de nuevo podrían no abrirse en macOS 27 y requerir restaurar los datos y reinstalar. AppPorts las marca como «Firma sustituida» y avisa al arrancar; consulte la [guía de actualización a macOS 27](/es/macos-27). Desactivar el modo clásico no modifica las migraciones por enlace simbólico existentes. «Restaurar» sigue disponible.
+
+## Ajustes relacionados con la migración por montaje
+
+Esta migración no tiene un ajuste independiente. «Estado de preparación» comprueba el acceso total al disco, la ubicación de AppPorts y el formato del almacenamiento externo, e indica qué requiere atención. Tras la primera migración por montaje correcta, AppPorts instala el agente de inicio de sesión `com.shimoko.AppPorts.container-mount` para volver a montar los volúmenes disponibles en sus contenedores. Se desinstala cuando se restaura el último registro de montaje. En sistemas antiguos como macOS 12, el agente no puede mostrar el diálogo de contraseña de administrador; abra AppPorts tras iniciar sesión para completar el montaje.
+
+## Ajustes de registro
+
+| Ajuste | Descripción | Valor predeterminado |
+|------|------|------|
+| Activar registro | Escribe los registros de ejecución en un archivo | Activado |
+| Tamaño máximo del registro | Elimina la mitad más antigua cuando se supera el límite | 2 MB |
+| Ubicación del registro | Ruta del archivo de registro | `~/Library/Application Support/AppPorts/AppPorts_Log.txt` |
+
+### Operaciones de registro
 
 | Operación | Descripción |
-|-----------|-------------|
-| Ver en Finder | Abre el directorio que contiene el archivo de registro |
-| Exportar Paquete de Diagnóstico | Genera un archivo ZIP que contiene registros, registros de operaciones e información del sistema |
-| Limpiar Registro | Limpia el contenido actual del archivo de registro |
+|------|------|
+| Ver en Finder | Abre la carpeta que contiene el registro |
+| Exportar paquete de diagnóstico | Genera un ZIP con registros, operaciones e información del sistema |
+| Vaciar registro | Borra el contenido del registro actual |
 
-Para descripciones detalladas del registro, consulte [Registro y Diagnóstico](/es/logging).
+Para más información, consulte [Registros y diagnóstico](/es/logging).
+
+Antes de crear una copia, firmar o restaurar manualmente, AppPorts detiene la tarea de firma en segundo plano de esta sesión y espera a que terminen sus procesos hijos, para evitar que sobrescriban una firma recién restaurada. La configuración del agente se conserva y el ajuste vuelve a aplicarse en el siguiente inicio de sesión. Si no puede confirmar que la tarea se ha detenido, se cancela la operación manual.

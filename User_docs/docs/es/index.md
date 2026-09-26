@@ -4,8 +4,8 @@ layout: home
 
 hero:
   name: "AppPorts"
-  text: "Herramienta de migración"
-  tagline: "Herramienta de migración de apps para macOS"
+  text: "Los discos externos salvan el mundo"
+  tagline: "Traslada aplicaciones grandes y directorios de datos al almacenamiento externo, crea sus entradas locales automáticamente y libera espacio valioso en tu Mac"
   actions:
     - theme: brand
       text: "Inicio rápido"
@@ -20,14 +20,14 @@ hero:
 
 features:
   - icon: 🔄
-    title: "Migración sin insignias"
-    details: "Migración con un clic de apps grandes a discos externos. Sin flechas de acceso directo en Finder; Launchpad y el menú de la app funcionan normalmente."
+    title: "Migración sin flecha de acceso directo"
+    details: "Traslada aplicaciones grandes al almacenamiento externo con un clic. Solo queda un contenedor de lanzamiento ligero en el Mac; Finder no muestra flechas de acceso directo, y Launchpad y los menús de aplicaciones funcionan con normalidad."
   - icon: 🔒
-    title: "Protección contra actualizaciones"
-    details: "Detecta automáticamente apps con auto-actualización Sparkle y Electron. La migración bloqueada evita que las actualizaciones dañen las apps externas."
+    title: "Protección frente a actualizaciones automáticas"
+    details: "AppPorts detecta aplicaciones con actualización automática, como Sparkle y Electron, y ofrece «Migración bloqueada». Si la versión local es más reciente que la copia externa, muestra «Pendiente de mover fuera»."
   - icon: 📦
     title: "Gestión de directorios de datos"
-    details: "Migre subdirectorios de ~/Library/, ~/.npm y más al almacenamiento externo con vista de árbol, búsqueda y ordenación."
+    details: "Traslada subdirectorios de ~/Library/, ~/.npm y otros datos al almacenamiento externo. Los datos de contenedores de aplicaciones aisladas, como el historial de WeChat, se migran por montaje a un disco externo APFS sin modificar la firma."
 ---
 
 <script setup lang="ts">

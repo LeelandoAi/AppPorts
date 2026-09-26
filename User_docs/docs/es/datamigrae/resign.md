@@ -2,145 +2,95 @@
 outline: deep
 ---
 
-# Re-firmado y Prevención de Fallos
+# Firma y prevención de cierres inesperados
 
 ![](https://pic.cdn.shimoko.com/appports/%E6%88%AA%E5%B1%8F2026-05-08%2008.38.37.png)
 
-## Por Qué las Aplicaciones Pueden Fallar Después de la Migración de Datos
+::: warning Volver a firmar no es una solución universal
+Volver a firmar con Ad-hoc sustituye la firma del desarrollador y elimina los derechos de aislamiento, grupos de apps y llavero. Una app aislada, como WeChat o una app de App Store, podría no abrirse en macOS 27 y perder su sesión. La nueva versión guarda primero la app original completa para restaurar su firma y derechos; restaurar la firma no garantiza recuperar una sesión que ya se haya perdido.
 
-El mecanismo de firma de código de macOS (`codesign`) verifica la integridad del paquete de la aplicación, incluyendo la estructura de rutas de archivos. Cuando AppPorts migra el directorio de datos de una aplicación al almacenamiento externo y lo reemplaza con un enlace simbólico, el sello de firma se rompe, causando los siguientes problemas:
+Desde la versión 1.8.2, AppPorts rechaza por defecto volver a firmar apps aisladas. Solo se permite al activar el modo clásico y confirmar los riesgos. Los datos de contenedores usan [migración por montaje](/es/datamigrae/mount-migration), sin modificar la firma. Consulte [Datos de contenedores, aislamiento e identidad de firma](/es/datamigrae/container-identity).
+:::
 
-- **Bloqueo de Gatekeeper**: `codesign --verify --deep --strict` detecta un fallo de firma; el sistema muestra un diálogo de "Dañado" o "de desarrollador no identificado", bloqueando el inicio de la aplicación
-- **Interrupción del Acceso a Keychain**: Las aplicaciones que dependen de grupos de acceso a Keychain no pueden leer las credenciales almacenadas debido a cambios en la identidad de firma
-- **Fallo de Entitlements**: Algunos entitlements de aplicaciones están vinculados a la identidad de firma; después de cambios de firma, los entitlements no coinciden
+## Qué problema resuelve volver a firmar
 
-### Tipos de Aplicaciones de Alto Riesgo
+macOS comprueba la integridad de las apps mediante la firma de código. Tras mover la app al disco externo y dejar un lanzador local, a veces el sistema considera que se ha modificado y rechaza abrirla con un aviso de que está dañada o procede de un desarrollador no identificado. En ese caso, volver a firmar con Ad-hoc **la app real del disco externo** puede permitir que supere la comprobación.
 
-| Tipo de App | Nivel de Riesgo | Razón |
-|-------------|----------------|-------|
-| Apps con auto-actualización Sparkle | **Alto** | El actualizador puede eliminar o reemplazar la app, dañando los enlaces simbólicos |
-| Apps con auto-actualización Electron | **Alto** | `electron-updater` también puede interferir con las apps en almacenamiento externo |
-| Apps dependientes de Keychain | **Alto** | El firmado Ad-hoc cambia la identidad de firma; los grupos de acceso a Keychain fallan |
-| Apps de Mac App Store | **Alto** | Protección SIP; no se pueden re-firmar |
-| Apps con auto-actualización nativa (Chrome, Edge) | Medio | La auto-actualización puede reemplazar la copia externa, invalidando la entrada local |
-| Apps iOS (versión Mac) | Bajo | Usa Stub Portal o whole symlink; menos problemas de firma |
+Ese es su único propósito. No guarda relación con migrar directorios de datos; asociarlo a la migración de contenedores en versiones antiguas originó los problemas de macOS 27.
 
-### Tipos de Directorios de Datos de Alto Riesgo
+## Cuándo no usarlo
 
-| Tipo de Datos | Nivel de Riesgo | Razón |
-|---------------|----------------|-------|
-| `~/Library/Application Support/` | Medio | La app puede usar bloqueos de archivos, registros WAL de SQLite o atributos extendidos; puede comportarse anormalmente a través de enlaces simbólicos |
-| `~/Library/Group Containers/` | Medio | Compartido por múltiples apps bajo el mismo Team; los enlaces simbólicos pueden interferir con otras apps |
-| `~/Library/Preferences/` | Bajo-Medio | `cfprefsd` cachea archivos plist; los enlaces simbólicos pueden causar lectura de datos obsoletos |
-| `~/Library/Caches/` | Bajo | Los cachés son reconstruibles; la mayoría de las apps manejan la ausencia de caché con gracia |
+| Situación | Explicación |
+|------|------|
+| App aislada | Se rechaza por defecto; el modo clásico lo permite tras confirmar los riesgos, pero se debe priorizar la migración por montaje |
+| App de App Store | SIP la protege y no se puede volver a firmar |
+| App cuya sesión depende del llavero | Volver a firmar hace perder la sesión |
+| App con widgets o extensiones de compartir | La pérdida de derechos de grupos impide a las extensiones leer datos compartidos |
+| App que se abre normalmente | Si no hay problema, no vuelva a firmarla |
 
-## Mecanismo de Re-firmado
+Considérelo únicamente si aparece realmente un aviso de app dañada tras migrarla al disco externo. Pruebe antes a reinstalar o descargar de nuevo desde la web oficial.
 
-### Firmado Ad-hoc
+## Opciones y ajustes
 
-AppPorts usa **firmado Ad-hoc** (firmado local sin certificado) para corregir las firmas de aplicaciones después de la migración. Comando de ejecución:
+| Opción | Ubicación | Predeterminado | Comportamiento |
+|------|------|------|------|
+| Firmar esta app | Menú contextual de la app | Manual | Crea una copia completa y firma una copia de trabajo; rechaza apps aisladas por defecto y exige confirmar riesgos en modo clásico |
+| Volver a firmar después de la migración | Barra de herramientas de datos, solo en modo clásico | Desactivado | Vuelve a firmar la app asociada tras migrar por enlace simbólico |
+| Re-firmado al iniciar sesión | Ajustes | Desactivado en instalaciones nuevas | Solo procesa registros antiguos; omite los nuevos con instantánea completa para no eludir la transacción de firma |
+| Restaurar firma original | Menú contextual, barra de herramientas de datos o panel de reparación | Manual | Restaura la app original desde una copia completa; con registros antiguos se puede elegir un original oficial de la misma versión, sin clave privada del desarrollador |
 
-```bash
-codesign --force --deep --sign - <ruta de la app>
-```
+El aislamiento se detecta leyendo los derechos de **la app real**, no del lanzador local. Si `com.apple.security.app-sandbox` es true, se rechaza la firma. El [modo clásico](/es/settings#classic-data-migration-mode) permite firmar apps aisladas con una segunda confirmación cada vez.
 
-Donde `-` indica firmado Ad-hoc (sin certificado de desarrollador).
-
-### Flujo de Firmado
+## Proceso de firma
 
 ```mermaid
 flowchart TD
-    A[Iniciar re-firmado] --> B[Hacer copia de seguridad de la identidad de firma original]
-    B --> C{¿La app está bloqueada?}
-    C -->|Sí| D[Desbloquear temporalmente la bandera uchg]
-    C -->|No| E{¿La app es escribible?}
-    D --> E
-    E =>|No escribible & propiedad root| F[Intentar cambiar propiedad con admin]
-    E =>|Escribible| G[Limpiar atributos extendidos]
-    F --> G
-    F -->|Falló & app MAS| H[Omitir firmado - protección SIP]
-    G --> I[Limpiar desorden del directorio raíz del bundle]
-    I --> J{¿Contents es un enlace simbólico?}
-    J =>|Sí| K[Reemplazar temporalmente con copia real del directorio]
-    J =>|No| L[Ejecutar firmado profundo]
-    K --> L
-    L =>|Falló| M[Fallback a firmado superficial]
-    L =>|Éxito| N{¿Contents fue reemplazado temporalmente?}
-    M --> N
-    N =>|Sí| O[Restaurar enlace simbólico]
-    N =>|No| P[Re-bloquear bandera uchg]
-    O --> P
-    P => Q[Firmado completado]
+    A[Resolver la app real y comprobar el modo clásico] --> B[Guardar la app original completa y verificar contenido]
+    B --> C[Crear copia de trabajo en el mismo volumen]
+    C --> D[Volver a firmar y verificar la copia]
+    D --> E[Guardar resúmenes del contenido original y firmado]
+    E --> F[Comprobar que la app actual no ha cambiado]
+    F --> G[Intercambiar atómicamente la copia y la app actual]
+    D -->|Fallo| H[Conservar la app actual y la copia de seguridad]
+    F -->|Contenido modificado| H
+    G -->|Almacenamiento sin intercambio seguro| H
 ```
 
-### Pasos Clave
+El lanzador local se resuelve primero hasta la app real. Tanto la firma como la restauración actúan sobre el `.app` real y no sobrescriben el lanzador. Si falla la firma o la verificación de la copia de trabajo, la app actual no cambia. También se conserva su estado de bloqueo original.
 
-1. **Copia de seguridad de la identidad de firma original**: Antes de firmar, lee la identidad de firma actual de la app (parsea líneas `Authority=` vía `codesign -dvv`), guarda en `~/Library/Application Support/AppPorts/signature-backups/<BundleID>.plist`
+## Copia de seguridad y restauración de la firma
 
-2. **Limpiar atributos extendidos**: Ejecuta `xattr -cr` para eliminar resource forks, info de Finder, etc., evitando errores "detritus not allowed" durante el firmado
+**Una copia completa permite restaurar la firma de un desarrollador externo sin su clave privada.** La firma original ya está en los archivos de la app. Restaurar significa recuperar esos archivos, no firmar otra vez en nombre del desarrollador. Se guardan el programa principal, los asistentes anidados, los frameworks, los recursos de firma y los derechos originales. Las apps que ya eran Ad-hoc o no estaban firmadas también vuelven a su estado original.
 
-3. **Limpiar directorio raíz del bundle**: Elimina `.DS_Store`, `__MACOSX`, `.git`, `.svn` y otro desorden
+Las copias se guardan en `~/Library/Application Support/AppPorts/signature-backups/`: un registro `.plist` asociado al identificador de la app y una copia original `original-…app`. El formato de versión 2 conserva los resúmenes del contenido original y del firmado de nuevo. Se prioriza la copia en escritura en los sistemas de archivos compatibles; en los demás se necesita una copia completa. Deje espacio para la copia de seguridad y la copia de trabajo. Si falta espacio o falla la copia, se detiene la firma.
 
-4. **Manejar enlace simbólico Contents**: Si `Contents/` es un enlace simbólico (estrategia Deep Contents Wrapper), lo reemplaza temporalmente con una copia real del directorio, luego restaura el enlace simbólico después del firmado
+Para restaurar:
 
-5. **Firmado profundo → fallback a firmado superficial**: Prefiere firmado `--deep` (cubriendo todos los componentes anidados); si falla por permisos o problemas de resource fork, hace fallback a firmado superficial sin `--deep`
+1. Cierre la app.
+2. Si migró datos de contenedores en modo clásico, restaure primero los directorios correspondientes en «App Data». Tras recuperar su identidad aislada, la app no puede leer datos fuera del contenedor mediante enlaces simbólicos. AppPorts lo comprueba e impide saltarse este paso.
+3. Pulse «Restaurar firma original» en el menú contextual, la barra de herramientas de datos o el panel de reparación.
+4. AppPorts verifica la copia, comprueba si la app se ha actualizado o modificado, valida la firma original en una copia de trabajo y sustituye la app de forma segura. Al terminar correctamente, elimina la copia de seguridad.
 
-6. **Mecanismo de reintento**: Cuando `codesign` produce "internal error" o es terminado por SIGKILL, reintenta hasta 2 veces
+**Si la app ha cambiado o la copia está dañada, la restauración se detiene y conserva ambas.** No sobrescribe una versión nueva con una antigua ni mezcla un resultado de firma reciente con una copia antigua. Si el almacenamiento no admite intercambio atómico, primero debe devolver la app al Mac. El análisis ordinario no elimina los materiales de recuperación.
 
-## Copia de Seguridad y Restauración de Firma
+Tras una actualización o reinstalación oficial, si la firma supera una verificación estricta y la identidad del desarrollador coincide con el registro, la siguiente firma genera una nueva copia completa de la app actual. El registro antiguo se archiva en `signature-backups/retired/` y se conserva su copia original, sin mezclarla con la nueva restauración. Las copias archivadas siguen ocupando espacio. Cuando ya no necesite esa versión, localice su copia mediante `snapshotName` en el registro archivado antes de eliminarla.
 
-### Resolución de Ruta para Apps Vinculadas
+### Qué hacer con una copia antigua que solo contiene el nombre de la identidad
 
-Para apps vinculadas (estado: "Vinculada"), las operaciones de firmado resuelven automáticamente la **ruta real de la app externa** en lugar del shell Stub Portal local o el enlace simbólico. Estrategia de resolución:
+Los `.plist` antiguos contienen el identificador de la app, el nombre de la identidad de firma, la ruta y la fecha, pero no el programa original ni sus derechos. No permiten restaurar la firma. Tratar un registro Ad-hoc como eliminación de firma o firmar con un nombre de identidad no constituye una restauración real.
 
-| Método de Migración | Resolución |
-|---------------------|-----------|
-| Whole App Symlink | Resuelve el destino del enlace simbólico a la ruta real `.app` externa |
-| Stub Portal | Extrae la ruta `REAL_APP='...'` del script `Contents/MacOS/launcher` |
+La nueva versión conserva esos registros y ofrece «Elegir app original…». Obtenga un `.app` original oficial de **la misma app y la misma versión**. AppPorts verifica el Bundle ID, la versión y la firma; si el registro contiene una identidad de desarrollador, también la comprueba. Una vez validado, restaura el original en la ubicación de la app real actual. El lanzador local sigue funcionando y el original seleccionado no se modifica.
 
-Esto significa que las operaciones de copia de seguridad, restauración y re-firmado siempre apuntan al paquete de aplicación real, asegurando que los cambios de firma se apliquen.
+Si no encuentra esa versión, siga los [pasos de reparación](/es/macos-27#reparacion): restaure los datos, devuelva la app al Mac y reinstálela desde una fuente oficial. Un registro antiguo por sí solo no puede recrear la firma perdida.
 
-### Copia de Seguridad
+## Riesgos relacionados con los tipos de apps
 
-Los archivos de copia de seguridad se almacenan en el directorio `~/Library/Application Support/AppPorts/signature-backups/`, con el nombre de la **app real** `BundleID.plist`:
+No están directamente relacionados con volver a firmar, pero suelen consultarse juntos:
 
-| Campo | Descripción |
-|-------|-------------|
-| `bundleIdentifier` | Bundle ID de la app |
-| `signingIdentity` | Identidad de firma original (ej., `Developer ID Application: ...` o `ad-hoc`) |
-| `originalPath` | Ruta original de la app |
-| `backupDate` | Marca de tiempo de la copia de seguridad |
+| Tipo de app | Riesgo | Explicación |
+|------|------|------|
+| Apps con actualizador Sparkle / Electron | Alto | El actualizador puede eliminar o sustituir la app externa; use «Migración bloqueada» |
+| Chrome / Edge | Medio | Las actualizaciones se instalan localmente; «Pendiente de mover fuera» indica que hay que migrar de nuevo |
+| Apps de App Store | Alto | No se pueden volver a firmar; en macOS 15.1+ es preferible la instalación externa nativa de App Store |
 
-Las copias de seguridad se activan en estos momentos:
-
-- Antes de la migración del directorio de datos (si el re-firmado automático está habilitado) — usa la ruta real de la app para la copia de seguridad
-- Antes de cualquier operación de firmado (idempotente; no sobrescribe copias de seguridad existentes)
-- Acción manual de "Copia de seguridad de firma"
-
-### Restauración
-
-Al restaurar una firma, AppPorts ejecuta diferentes estrategias basadas en la identidad de firma respaldada:
-
-| Identidad de Firma Respaldada | Comportamiento de Restauración |
-|------------------------------|-------------------------------|
-| `ad-hoc` o vacío | Ejecuta `codesign --remove-signature` para eliminar la firma; elimina la copia de seguridad |
-| Identidad de certificado de desarrollador válido | Verifica si el certificado existe en Keychain. Si está presente, re-firma con la identidad original |
-| Identidad de certificado de desarrollador válido pero el certificado no está en esta máquina | **Fallback a firmado Ad-hoc**; la firma original no puede restaurarse completamente |
-
-### Escenarios de Fallo de Restauración
-
-Los siguientes escenarios causan fallo o incompletitud en la restauración de firma:
-
-| Escenario | Resultado |
-|-----------|-----------|
-| El archivo plist de copia de seguridad no existe | Lanza error `noBackupFound`; no se puede restaurar |
-| El certificado de desarrollador original no está en el Keychain local | Hace fallback a firmado Ad-hoc. La app puede iniciarse pero los grupos de acceso a Keychain y algunos entitlements pueden fallar |
-| Apps de Mac App Store (protección SIP) | Silenciosamente omitidas. SIP previene cualquier modificación a las firmas de apps del sistema |
-| Directorio de app no escribible & propiedad root | Intenta cambiar la propiedad mediante privilegios de admin. Falla si el usuario cancela el prompt de autorización |
-| Destino del enlace simbólico Contents perdido | `copyItem` falla en el paso de reemplazo temporal; no se puede ejecutar el firmado |
-| El usuario cancela la autorización de admin | Lanza `codesignFailed("User cancelled authorization")` |
-| Firmado profundo y superficial fallaron | Error propagado hacia arriba; la operación de firmado falla |
-
-::: warning ⚠️ Sobre Certificados de Desarrollador Perdidos
-El escenario de fallo de restauración más común en el mundo real es: la app original fue firmada por un desarrollador de terceros (ej., `Developer ID Application: Google LLC`), pero el Keychain de la máquina actual no tiene la clave privada correspondiente. En este caso, la operación de restauración solo puede generar una firma Ad-hoc; **la identidad de firma original no puede restaurarse completamente**. Para apps que dependen de identidades de firma específicas para grupos de acceso a Keychain o perfiles de configuración empresarial, esto puede causar anomalías funcionales.
-:::
+Consulte [Detección de actualizadores](/es/migration-strategy/updater-detection) y [Tipos de apps y estrategias](/es/migration-strategy/strategy-map).

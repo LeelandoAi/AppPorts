@@ -2,100 +2,127 @@
 outline: deep
 ---
 
-# Compatibilidad y Limitaciones
+# Compatibilidad y limitaciones
 
-## Requisitos del Sistema
+## Requisitos del sistema
 
 | Requisito | Descripción |
-|-----------|-------------|
-| Versión mínima del SO | macOS 12.0 (Monterey) |
+|------|------|
+| Sistema mínimo | macOS 12.0 (Monterey) |
 | Arquitectura | Intel x86_64 / Apple Silicon (arm64) |
-| Permisos | Acceso Total al Disco |
-| Almacenamiento Externo | Se requiere al menos un dispositivo de almacenamiento externo |
+| Permiso | Acceso total al disco |
+| Almacenamiento externo | Al menos un dispositivo externo |
 
-## Compatibilidad de Características
+## Compatibilidad de funciones
 
-### Por Versión de macOS
+### Según la versión de macOS
 
-| Característica | macOS 12.0 - 15.0 | macOS 15.1+ |
-|----------------|:---:|:---:|
-| Migración de Apps (Stub Portal) | ✓ | ✓ |
-| Migración de Directorios de Datos | ✓ | ✓ |
-| Migración de Directorios (carpetas personalizadas) | ✓ | ✓ |
-| Gestión de Firma de Código | ✓ | ✓ |
-| Migración de Apps App Store a Disco Externo | ✗ | ✓ |
-| Actualización In Situ de Apps App Store en Disco Externo | ✗ | ✓ |
-| Migración de Apps iOS | ✓ | ✓ |
+| Función | macOS 12.0 - 15.0 | macOS 15.1+ |
+|------|:---:|:---:|
+| Migración de apps con Stub Portal | ✓ | ✓ |
+| Migración de datos por enlace simbólico | ✓ | ✓ |
+| Migración por montaje de contenedores | ✓, exige contraseña de administrador para montar | ✓, las pruebas en 27 no requieren contraseña; de 13 a 26 no se han verificado individualmente |
+| Migración de carpetas personalizadas | ✓ | ✓ |
+| Gestión de firmas de código | ✓ | ✓ |
+| Migración externa de apps de App Store | ✗ | ✓ |
+| Actualización de App Store directamente en almacenamiento externo | ✗ | ✓ |
+| Migración de apps de iOS | ✓ | ✓ |
 
-::: warning ⚠️ Apps de App Store en Versiones de macOS Inferiores a 15.1
-Las versiones de macOS anteriores a 15.1 (Sequoia) no soportan la instalación de apps de App Store en discos externos. Necesita habilitar manualmente "Migración de Apps App Store" en la configuración de AppPorts, y las actualizaciones de apps requieren re-migración manual para sobrescribir.
+::: warning Apps de App Store antes de macOS 15.1
+Antes de macOS 15.1 (Sequoia) no se admite la instalación externa nativa de apps de App Store. Si necesita migrarlas, active manualmente esa opción en AppPorts. Después de actualizar una app debe volver a migrarla para sustituir la copia externa.
 :::
 
-### Por Tipo de App
+### Según el tipo de app
 
-| Tipo de App | Migración | Restauración | Auto-Actualización | Notas |
-|-------------|:---:|:---:|:---:|-------|
-| App macOS nativa | ✓ | ✓ | ✓ | Mejor compatibilidad |
-| App Sparkle | ✓ | ✓ | Requiere bloqueo | El bloqueo previene actualizaciones en la app; debe restaurar para actualizar |
-| App Electron | ✓ | ✓ | Requiere bloqueo | Igual que Sparkle |
-| Chrome / Edge (actualizador personalizado) | ✓ | ✓ | ✓ | El actualizador instala en local; no daña la copia externa |
-| App Store (macOS 15.1+) | ✓ | ✓ | ✓ | Instalación externa nativa; App Store puede actualizar directamente |
-| App Store (macOS <15.1) | ✓ | ✓ | Manual | Las actualizaciones requieren re-migración |
-| App iOS (versión Mac) | ✓ | ✓ | ✓ | Usa iOS Stub Portal |
-| Apps del sistema | ✗ | — | — | Protección SIP; no se pueden migrar |
+| Tipo | Migración | Restauración | Actualización automática | Descripción |
+|------|:---:|:---:|:---:|------|
+| App nativa de macOS | ✓ | ✓ | ✓ | Máxima compatibilidad |
+| Sparkle | ✓ | ✓ | Requiere bloqueo | El bloqueo impide actualizar desde la app; devuélvala al Mac antes de actualizar |
+| Electron | ✓ | ✓ | Requiere bloqueo | Igual que Sparkle |
+| Chrome / Edge, actualizador personalizado | ✓ | ✓ | ✓ | Instala la actualización localmente sin dañar la copia externa |
+| App Store, macOS 15.1+ | ✓ | ✓ | ✓ | Instalación externa nativa y actualización directa desde App Store |
+| App Store, macOS <15.1 | ✓ | ✓ | Manual | Hay que volver a migrar después de actualizar |
+| iOS para Mac | ✓ | ✓ | ✓ | Usa iOS Stub Portal |
+| App del sistema | ✗ | — | — | Protegida por SIP; no se puede migrar |
 
-::: warning ⚠️ Migración de Apps Protegidas
-Las apps de App Store o propiedad de root pueden quedar bloqueadas por permisos de macOS, impidiendo que AppPorts elimine o sustituya automáticamente la copia local. Cuando aparezca la advertencia de app protegida, mueva primero la app al almacenamiento externo manualmente en Finder y luego vuelva a AppPorts para crear un enlace local.
+::: warning Migración de apps protegidas
+Los permisos de macOS pueden impedir que AppPorts elimine o sustituya automáticamente la copia local de apps de App Store o propiedad de root. Si aparece el aviso, muévala primero con Finder al disco externo y después cree el enlace local desde AppPorts.
 :::
 
-### Por Tipo de Directorio de Datos
-
-| Tipo de Directorio de Datos | Migración | Riesgo |
-|-----------------------------|:---:|------|
-| `~/Library/Application Support/` | ✓ | Medio — puede usar bloqueos de archivos o registros WAL de SQLite |
-| `~/Library/Preferences/` | ✓ | Bajo-Medio — el caché de `cfprefsd` puede causar lecturas obsoletas |
-| `~/Library/Containers/` | ✓ | Medio — compartido por apps bajo el mismo Team |
-| `~/Library/Group Containers/` | ✓ | Medio — datos compartidos pueden interferir con otras apps |
-| `~/Library/Caches/` | ✓ | Bajo — los cachés son reconstruibles |
-| `~/Library/Logs/` | ✓ | Bajo — solo archivos de registro |
-| `~/Library/WebKit/` | ✓ | Medio — almacenamiento local de WebKit |
-| `~/Library/HTTPStorages/` | ✓ | Bajo — almacenamiento de sesiones de red |
-| `~/Library/Application Scripts/` | ✓ | Bajo — scripts de extensiones |
-| `~/Library/Saved Application State/` | ✓ | Bajo — restauración de estado de ventanas |
-| `~/.npm`, `~/.m2` etc. dot-folder | ✓ | Bajo — cachés de herramientas de desarrollo |
-| Carpetas personalizadas bajo el directorio de inicio del usuario | ✓ | Depende del contenido — cierre apps o herramientas que estén escribiendo antes de migrar |
-
-::: warning ⚠️ Alcance de Directorios Personalizados
-La Migración de Directorios está pensada para carpetas reales bajo el directorio de inicio del usuario. No puede seleccionar archivos, enlaces simbólicos, rutas dentro del destino externo, directorios del sistema ni rutas que se solapen con elementos ya gestionados.
+::: tip Flechas de acceso directo en Finder
+Los lanzadores antiguos pueden ser enlaces simbólicos completos y mostrar flecha. La versión actual usa Stub Portal por defecto para los `.app` normales y normalmente no muestra flecha. Si sigue apareciendo, devuelva la app al Mac y migre de nuevo.
 :::
 
-## Contenido No Migrable
+::: tip Sobre «Pendiente de mover fuera»
+«Pendiente de mover fuera» requiere versiones comparables y una identificación fiable de la misma app. AppPorts usa primero el Bundle ID y, si es necesario, el nombre normalizado. No aparece si faltan versiones, no se pueden comparar o apps homónimas tienen distintos Bundle ID.
+:::
 
-### Protegido por SIP
+### Según el tipo de directorio de datos
 
-| Ruta | Razón |
-|------|-------|
-| Apps del sistema macOS (Safari, Finder, etc.) | Protección de Integridad del Sistema |
-| Directorio de nivel superior `~/Library/Containers/` | Protección del sistema macOS |
+| Directorio | Método | Riesgo |
+|------|:---:|------|
+| `~/Library/Application Support/` | Enlace simbólico | Medio: puede usar bloqueos de archivo o registros SQLite WAL |
+| `~/Library/Preferences/` | Enlace simbólico | Bajo a medio: la caché `cfprefsd` puede devolver ajustes antiguos |
+| `~/Library/Containers/` | Montaje | Medio: exige APFS sin encriptar, permiso en la primera apertura y disco conectado antes de usar |
+| `~/Library/Group Containers/` | Montaje | Medio: lo anterior, y los datos compartidos afectan a otras apps de la misma Team |
+| `~/Library/Caches/` | Enlace simbólico | Bajo: la caché puede recrearse |
+| `~/Library/Logs/` | Enlace simbólico | Bajo: solo registros |
+| `~/Library/WebKit/` | Enlace simbólico | Medio: almacenamiento local de WebKit |
+| `~/Library/HTTPStorages/` | Enlace simbólico | Bajo: sesiones de red |
+| `~/Library/Application Scripts/` | Enlace simbólico | Bajo: scripts de extensiones |
+| `~/Library/Saved Application State/` | Enlace simbólico | Bajo: restauración del estado de ventanas |
+| Carpetas ocultas como `~/.npm` y `~/.m2` | Enlace simbólico | Bajo: cachés de herramientas de desarrollo |
+| Carpetas personalizadas dentro de la carpeta de inicio | Enlace simbólico | Depende del contenido: cierre las apps o herramientas que estén escribiendo antes de migrar |
 
-### Contiene Referencias de Rutas
+::: warning Directorios de datos importantes
+Historiales de WeChat, imágenes de máquinas virtuales, bibliotecas de juegos, bases de datos y cachés de modelos suelen ser grandes, escribirse con frecuencia y depender de rutas y bloqueos. Haga una copia independiente antes de migrar. Si hay problemas, restaure primero los datos en el Mac y después investigue.
+:::
 
-| Ruta | Razón |
-|------|-------|
-| `~/.local` | Contiene referencias de rutas ejecutables; las herramientas de línea de comandos pueden fallar después de la migración |
-| `~/.config` | Contiene configuraciones de rutas absolutas; las configuraciones de herramientas pueden fallar después de la migración |
+::: warning Los contenedores solo pueden migrarse por montaje
+Las apps aisladas no pueden leer los datos de `~/Library/Containers/` y `~/Library/Group Containers/` trasladados mediante enlaces simbólicos. El método antiguo lo evitaba volviendo a firmar, pero la app podía dejar de abrirse en macOS 27. Desde 1.8.2 estos directorios solo ofrecen [migración por montaje](/es/datamigrae/mount-migration) y se rechaza volver a firmar apps aisladas. Consulte [Datos de contenedores, aislamiento e identidad de firma](/es/datamigrae/container-identity).
+:::
 
-## Requisitos de Almacenamiento Externo
+::: warning Alcance de las carpetas personalizadas
+La migración admite carpetas reales dentro de la carpeta de inicio. No admite archivos, enlaces simbólicos, rutas dentro del destino externo, directorios del sistema ni rutas que contengan elementos gestionados o estén contenidas en ellos.
+:::
+
+::: warning Conflicto de destino
+Un tamaño parecido no basta para recuperar o asumir la gestión de un directorio externo. AppPorts solo continúa automáticamente si sus metadatos coinciden completamente con la operación actual. Si no, lo considera un conflicto con un directorio real y se detiene.
+:::
+
+## Elementos que no se pueden migrar
+
+### Protegidos por SIP
+
+| Ruta | Motivo |
+|------|------|
+| Apps del sistema macOS, como Safari o Finder | Protección de integridad del sistema |
+| Directorios de nivel superior de `~/Library/Containers/` | Protección del sistema macOS |
+
+### Con referencias a rutas
+
+| Ruta | Motivo |
+|------|------|
+| `~/.local` | Contiene rutas de ejecutables; las herramientas de línea de comandos pueden dejar de funcionar |
+| `~/.config` | Contiene ajustes con rutas absolutas que pueden dejar de ser válidos |
+
+## Requisitos de almacenamiento externo
 
 | Requisito | Descripción |
-|-----------|-------------|
-| Sistema de Archivos | APFS, HFS+, exFAT soportados |
-| Espacio Mínimo | Depende del tamaño de las aplicaciones migradas |
-| Interfaz | USB, Thunderbolt, NVMe todos soportados |
-| Mantener Conectado | El almacenamiento externo debe permanecer conectado después de la migración; de lo contrario las apps no pueden iniciarse |
+|------|------|
+| Sistema de archivos | Apps y datos normales: APFS, HFS+ o exFAT. **Contenedores: solo APFS** |
+| Espacio mínimo | Depende del tamaño de las apps |
+| Interfaz | Compatible con USB, Thunderbolt y NVMe |
+| Conexión | Debe permanecer conectado tras migrar; sin él no arrancarán las apps afectadas |
 
-::: tip 💡 Recomendaciones de Sistema de Archivos
-- **APFS**: Recomendado; soporta clones, snapshots, mejor rendimiento
-- **HFS+**: Buena compatibilidad; adecuado para Macs más antiguos
-- **exFAT**: Compatible multiplataforma; no soporta enlaces duros ni clones
+::: tip Sistema de archivos recomendado
+- **APFS**: recomendado, único formato compatible con el montaje de contenedores y con el mejor rendimiento.
+- **HFS+**: compatible con Mac antiguos, pero no permite migrar datos de contenedores.
+- **exFAT**: multiplataforma, pero no permite migrar contenedores. Para compartir con Windows puede usar una partición APFS independiente. Si exFAT ocupa todo el disco, las herramientas integradas no pueden reducirlo directamente: haga una copia y reparticione. Si ya hay espacio sin asignar, puede crear APFS según las [condiciones de particionado](/es/why-apfs#prepare-apfs).
+
+Consulte las razones y alternativas probadas en [Por qué el disco externo debe ser APFS](/es/why-apfs).
 :::
+
+### Unidades de red
+
+NAS, SMB, rclone y SFTP no son los principales objetivos de validación de AppPorts. Pueden funcionar, pero debe comprobar la estabilidad, consistencia de rutas, permisos, atributos extendidos y enlaces simbólicos. No son la opción recomendada para datos que se escriben continuamente.

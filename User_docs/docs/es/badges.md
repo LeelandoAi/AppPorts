@@ -2,83 +2,97 @@
 outline: deep
 ---
 
-# Marcadores de Estado
+# Guía de insignias de estado
 
-AppPorts muestra el estado actual de las aplicaciones y directorios de datos mediante marcadores de colores en forma de cápsula. Algunos marcadores son clicables para obtener información detallada.
+AppPorts utiliza insignias de colores con forma de cápsula para mostrar el estado de las aplicaciones y los directorios de datos. Algunas permiten hacer clic para ver más detalles o recomendaciones.
 
-## Marcadores de Estado de Aplicaciones
+## Insignias de las aplicaciones
 
-### Estado de Vinculación
+### Estado del enlace
 
-| Marcador | Icono | Color | Significado |
-|----------|-------|-------|-------------|
-| Vinculado | `link` | Verde | Aplicación migrada al almacenamiento externo con entrada local |
-| Migración Bloqueada | `lock.fill` | Verde | Vinculada y bloqueada con `uchg`, evitando que las auto-actualizaciones dañen la aplicación externa |
-| Migración Desbloqueada | `lock.open` | Naranja | Vinculada pero no bloqueada; las actualizaciones dentro de la app pueden eliminar la aplicación externa |
-| Vinculación Parcial | `link.badge.plus` | Amarillo | Componentes parciales de la app vinculados (ej., algunos archivos `.app` en un directorio) |
-| Enlace Huérfano | `link.badge.exclamationmark` | Rojo | Aplicación del almacenamiento externo perdida pero la entrada local aún existe |
-| Desvinculado | `externaldrive.badge.xmark` | Naranja | Aplicación en almacenamiento externo pero no vinculada localmente |
-| Externo | `externaldrive` | Naranja | Aplicación en almacenamiento externo sin entrada local |
-| Pendiente de mover fuera | `arrow.up.right.circle` | Cian | La app local real es más reciente que la copia externa antigua y puede moverse fuera para reemplazarla |
-| Local | `macmini` | Color secundario | Aplicación local regular, no migrada; se muestra cuando no hay otras etiquetas |
+| Insignia | Icono | Color | Significado |
+|------|------|------|------|
+| Enlazado | `link` | Verde | La aplicación se ha migrado al almacenamiento externo y tiene una entrada local |
+| Migración bloqueada | `lock.fill` | Verde | La aplicación está enlazada y bloqueada mediante `uchg` para proteger la copia externa frente a las actualizaciones automáticas |
+| Migración no bloqueada | `lock.open` | Naranja | La aplicación está enlazada pero no bloqueada; sus actualizaciones pueden eliminar o sobrescribir la copia externa |
+| Parcialmente enlazado | `link.badge.plus` | Amarillo | Algunos componentes están enlazados, como parte de los paquetes `.app` de un directorio |
+| Enlace huérfano | `link.badge.exclamationmark` | Rojo | La aplicación externa ha desaparecido, pero su entrada local aún existe |
+| No enlazado | `externaldrive.badge.xmark` | Naranja | La aplicación está en el almacenamiento externo y aún no se ha enlazado al Mac |
+| Externo | `externaldrive` | Naranja | Aplicación externa sin entrada local |
+| Pendiente de mover fuera | `arrow.up.right.circle` | Cian | La aplicación real local es más reciente que la copia externa del mismo nombre; se puede trasladar para sustituir esa copia antigua |
+| Local | `macmini` | Color secundario | Aplicación local normal, sin migrar; se muestra cuando no hay otras etiquetas |
 
-::: tip Cómo se detecta Pendiente de mover fuera
-AppPorts empareja primero las apps locales y externas por Bundle ID y, si es necesario, usa el nombre normalizado de la app como respaldo. El estado solo aparece cuando ambas versiones se pueden comparar y la versión local es más reciente.
+::: tip Cómo se determina «Pendiente de mover fuera»
+AppPorts compara primero las aplicaciones locales y externas por Bundle ID y, si hace falta, por su nombre normalizado. «Pendiente de mover fuera» solo aparece cuando ambas versiones se pueden comparar y la local es más reciente. Si falta una versión, el formato no permite compararlas o las aplicaciones con el mismo nombre tienen distintos Bundle ID, AppPorts conserva el estado local normal para evitar sobrescribir una aplicación externa por error.
 :::
 
-### Etiquetas de Framework
+### Frameworks
 
-| Marcador | Icono | Color | Significado | Acción al Hacer Clic |
-|----------|-------|-------|-------------|---------------------|
-| Sparkle | `arrow.triangle.2.circlepath` | Cian | Usa el framework Sparkle para actualizaciones automáticas | Después de migrar al almacenamiento externo, las actualizaciones dentro de la app pueden causar pérdida de la aplicación externa; se recomienda migración bloqueada |
-| Electron | `atom` | Índigo | Basado en el framework Electron con soporte de actualización automática | Después de migrar al almacenamiento externo, las actualizaciones dentro de la app pueden causar pérdida de la aplicación externa; se recomienda migración bloqueada |
+| Insignia | Icono | Color | Significado | Explicación al hacer clic |
+|------|------|------|------|----------|
+| Sparkle | `arrow.triangle.2.circlepath` | Cian | Usa Sparkle para las actualizaciones automáticas | Tras la migración, actualizar desde la aplicación puede causar la pérdida de la copia externa; se recomienda bloquear la migración |
+| Electron | `atom` | Índigo | Aplicación Electron que puede admitir actualizaciones automáticas | Tras la migración, actualizar desde la aplicación puede causar la pérdida de la copia externa; se recomienda bloquear la migración |
 
-### Etiquetas de Tipo
+### Tipos de aplicación
 
-| Marcador | Icono | Color | Significado |
-|----------|-------|-------|-------------|
-| En Ejecución | `play.fill` | Púrpura | Aplicación actualmente en ejecución |
+| Insignia | Icono | Color | Significado |
+|------|------|------|------|
+| Ejecutando | `play.fill` | Morado | La aplicación está en ejecución |
 | Sistema | `lock.fill` | Gris | Aplicación del sistema macOS |
-| No Nativa | `iphone` | Rosa | Aplicación iOS/iPadOS (ejecutándose vía Apple Silicon) |
-| Store | `applelogo` | Azul | Aplicación de Mac App Store |
+| No nativo | `iphone` | Rosa | Aplicación de iOS/iPadOS ejecutada en un chip de Apple |
+| Tienda | `applelogo` | Azul | Aplicación de Mac App Store |
 
-### Etiquetas Especiales
+### Insignias especiales
 
-| Marcador | Icono | Color | Significado |
-|----------|-------|-------|-------------|
-| Re-firmada | `seal.fill` | Cian | La aplicación ha sido re-firmada Ad-hoc (se ejecuta cuando aparece "Dañado" después de la migración) |
+| Insignia | Icono | Color | Significado |
+|------|------|------|------|
+| Re-firmado | `seal.fill` | Cian | La aplicación tiene actualmente una firma Ad-hoc y AppPorts conserva una copia de seguridad de su firma |
+| Firma sustituida | `exclamationmark.shield.fill` | Rojo | AppPorts sustituyó la firma del desarrollador por una firma Ad-hoc. La aplicación puede no abrirse en macOS 27. Haz clic para ver la explicación, o elige «Ver los pasos de reparación» en el menú contextual para abrir el panel de reparación. Consulta la [guía de actualización a macOS 27](/es/macos-27) |
 
-::: tip 💡 Nota Especial sobre la Etiqueta Store
-Cuando una aplicación cumple las siguientes condiciones, la etiqueta "Store" se vuelve clicable y muestra instrucciones de instalación nativa de macOS 15.1+:
-- La aplicación está ubicada en el directorio `/Volumes/{drive}/Applications/` del almacenamiento externo
-- Gestionada nativamente por macOS; App Store puede realizar actualizaciones incrementales directamente en este directorio
+::: tip Diferencia entre «Re-firmado» y «Firma sustituida»
+Ambas indican que la firma actual es Ad-hoc; la diferencia es **la firma original**. Una aplicación con «Re-firmado» no tenía firma de desarrollador, o ya no se puede confirmar cuál tenía: volver a firmarla simplemente permite que se abra con normalidad. Una aplicación con «Firma sustituida» tenía una firma de desarrollador que se sustituyó por Ad-hoc. Esto puede impedir que una aplicación aislada se abra en macOS 27, por lo que se marca en rojo y ofrece acceso a la reparación.
 :::
 
-## Marcadores de Estado de Directorios de Datos
+::: tip Particularidad de la insignia «Tienda»
+La insignia «Tienda» permite hacer clic y muestra las instrucciones de instalación nativa en discos externos de macOS 15.1+ cuando:
+
+- La aplicación está en `/Volumes/{drive}/Applications/`, en el almacenamiento externo.
+- macOS gestiona la aplicación de forma nativa y App Store puede realizar actualizaciones incrementales directamente en ese directorio.
+:::
+
+## Insignias de los directorios de datos
 
 | Estado | Color | Significado |
-|--------|-------|-------------|
-| Local | Color secundario | Directorio en almacenamiento local, no migrado |
-| Vinculado | Verde | Migrado al almacenamiento externo; local es un enlace simbólico |
-| Necesita Normalización | Amarillo | Enlace gestionado por AppPorts, pero la ruta externa no está en la ubicación canónica; se recomienda la operación "Normalizar" |
-| Necesita Revinculación | Naranja | Datos del almacenamiento externo existen pero el enlace simbólico local se perdió; se recomienda la operación "Revincular" |
-| Enlace Suave Existente | Azul | Enlace simbólico creado por el usuario (no creado por AppPorts); opción de tomar el control de la gestión |
+|------|------|------|
+| Local | Color secundario | Directorio local sin migrar. El escudo junto a un contenedor indica que utiliza la migración por montaje |
+| Enlazado | Verde | Migración mediante enlace simbólico completada; el enlace local apunta al disco externo |
+| Montado | Morado | Migración por montaje completada; el volumen externo está montado en el directorio original |
+| Montaje pendiente | Naranja | El volumen de migración por montaje está en línea, pero sin montar; haz clic en «Montar» |
+| Disco externo desconectado | Rojo | No se encuentra el volumen de datos, normalmente porque el disco externo está desconectado; AppPorts lo reconecta automáticamente al conectarlo |
+| Necesita normalización | Amarillo | Enlace gestionado por AppPorts cuyo destino externo no está en la ubicación estándar; usa «Normalizar» |
+| Pendiente de reenlace | Naranja | Los datos externos siguen presentes, pero falta el enlace local; usa «Volver a enlazar» |
+| Enlace simbólico existente | Azul | Enlace simbólico creado fuera de AppPorts, que puedes incorporar a su gestión |
 
-## Combinaciones de Estado de Aplicaciones
+## Ejemplos de combinaciones
 
-Una aplicación puede mostrar múltiples marcadores simultáneamente:
-
-```text
-[Vinculado] [Sparkle] [En Ejecución]
-```
-Significado: Aplicación migrada al almacenamiento externo, usa el framework de actualización automática Sparkle, actualmente en ejecución.
+Una aplicación puede mostrar varias insignias a la vez:
 
 ```text
-[Externo] [Store] [No Nativa]
+[已链接] [Sparkle] [运行中]
 ```
-Significado: Aplicación iOS (versión Mac) en almacenamiento externo, instalada vía App Store.
+Significado: la aplicación se ha migrado al almacenamiento externo, usa Sparkle para actualizarse automáticamente y está en ejecución.
 
 ```text
-[Enlace Huérfano]
+[外部] [商店] [非原生]
 ```
-Significado: Aplicación del almacenamiento externo perdida o eliminada, pero la entrada local aún se mantiene. Se requiere desvinculación manual.
+Significado: aplicación de iOS para Mac instalada por App Store en el almacenamiento externo.
+
+```text
+[孤立链接]
+```
+Significado: la aplicación externa ha desaparecido o se ha eliminado, pero su entrada local permanece. Es necesario quitar el enlace manualmente.
+
+```text
+[待迁出]
+```
+Significado: existe una versión nueva de la aplicación real en el Mac y una copia antigua en el almacenamiento externo. Puedes repetir la migración para trasladar la versión local nueva y sustituir la copia externa antigua.

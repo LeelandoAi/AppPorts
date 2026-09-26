@@ -83,12 +83,20 @@ Los registros de errores contienen información estructurada:
 
 ### Códigos de Error
 
-| Código de Error | Significado |
-|-----------------|-------------|
-| `BACKUP-SIGNATURE-FAILED` | Copia de seguridad de firma falló |
-| `RESIGN-FAILED` | Re-firmado falló (la app puede no pasar la verificación de firma de macOS) |
-| `DATA-RESIGN-FAILED` | Re-firmado automático después de migración de directorio de datos falló |
-| `DATA-BACKUP-SIGNATURE-FAILED` | Copia de seguridad de firma antes de migración de directorio de datos falló (la firma original no se podrá restaurar después) |
+| Código de error | Significado |
+|--------|------|
+| `BACKUP-SIGNATURE-FAILED` | Fallo de la copia de seguridad de la firma |
+| `APP-MOVE-DESTINATION-CONFLICT` | El destino de migración de la aplicación ya existe y no se puede confirmar que sea seguro sustituirlo |
+| `APP-RESTORE-LOCAL-CONFLICT` | Al devolver la aplicación al Mac se ha encontrado un elemento local del mismo nombre que no se puede sobrescribir automáticamente |
+| `DATA-MIGRATE-DESTINATION-CONFLICT` | El destino de migración del directorio ya existe y los metadatos no coinciden por completo |
+| `RESIGN-FAILED` | Fallo al volver a firmar; la aplicación podría no superar la verificación de firma de macOS |
+| `DATA-RESIGN-FAILED` | Fallo al volver a firmar automáticamente después de migrar el directorio de datos |
+| `RESIGN-REFUSED-SANDBOXED` | Se ha rechazado volver a firmar una aplicación aislada |
+| `RESTORE-SIGNATURE-IDENTITY-UNAVAILABLE` | El certificado de firma original no está en este Mac; se ha rechazado la restauración |
+| `CONTAINER-MOUNT-*` | Fallo en una etapa de la migración por montaje, por ejemplo `CONTAINER-MOUNT-EXTERNAL-NOT-APFS` o `CONTAINER-MOUNT-SWITCH-FAILED` |
+| `CONTAINER-RESTORE-*` | Fallo en una etapa de restauración de un directorio migrado por montaje |
+| `DATA-BACKUP-SIGNATURE-FAILED` | Fallo de la copia de seguridad de la firma antes de migrar el directorio de datos; una restauración posterior no podrá usar la identidad original |
+
 
 ### Contexto de Operaciones de Directorio de Datos
 
@@ -97,7 +105,7 @@ Las operaciones de directorio de datos (migración, restauración, normalizació
 | Campo | Descripción |
 |-------|-------------|
 | `app_name` | Nombre de la app asociada |
-| `app_status` | Estado de la app (Vinculada, Local, etc.) |
+| `app_status` | Estado de la app («Enlazado», «Local», etc.) |
 | `app_is_resigned` | Si la app ha sido re-firmada |
 | `app_bundle_id` | Bundle ID de la app (leído de la ruta real) |
 | `app_real_path` | Ruta real externa de la app |
@@ -127,15 +135,15 @@ Ruta predeterminada del registro:
 
 Se puede personalizar mediante:
 
-- Barra de menú → Registros → Establecer Ubicación del Registro
-- Configuración → Configuración de Registro → Ruta Personalizada
+- Barra de menú → Registros → Establecer ubicación del registro...
+- Configuración → Configuración de registro → ruta personalizada
 
 ### Formato del Registro
 
 ```text
-[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] App started
+[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] 应用启动
 [2026-05-08 09:30:01] [DIAG] [session:a1b2c3d4] [pid:12345]   app_version: 1.6.1 (123)
-[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   Migration complete: 2.3 GB, 45.2 MB/s, 52.1s
+[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   迁移完成: 2.3 GB, 45.2 MB/s, 52.1s
 ```
 
 ### Niveles de Registro
@@ -156,7 +164,7 @@ Se puede personalizar mediante:
 - Tamaño máximo predeterminado: **2 MB** (configurable: 1 MB, 5 MB, 10 MB, 50 MB, 100 MB)
 - Auto-truncamiento al exceder: Descarta la mitad más antigua de las líneas, mantiene la mitad más nueva
 
-## Exportar Paquete de Diagnóstico
+## Exportar paquete de diagnóstico
 
 Cuando surgen problemas que requieren retroalimentación, por favor exporte un paquete de diagnóstico y adjúntelo al Issue.
 
@@ -164,20 +172,20 @@ Cuando surgen problemas que requieren retroalimentación, por favor exporte un p
 
 **Método 1: Barra de Menú**
 
-1. Haga clic en Barra de menú → Registros → Exportar Paquete de Diagnóstico
+1. Haga clic en Barra de menú → Registros → Exportar paquete de diagnóstico
 2. Elija la ubicación de guardado
 3. El sistema genera automáticamente un archivo `.zip` y lo abre en Finder
 
 **Método 2: Página de Configuración**
 
 1. Abra AppPorts → Configuración (esquina superior derecha)
-2. Encuentre la sección "Configuración de Registro"
-3. Haga clic en el botón "Exportar Paquete de Diagnóstico"
+2. Encuentre la sección "Configuración de registro"
+3. Haga clic en el botón "Exportar paquete de diagnóstico"
 4. Elija la ubicación de guardado
 
 ### Contenido del Paquete de Diagnóstico
 
-El `AppPorts-Diagnostic-<datetime>.zip` exportado contiene:
+El `AppPorts-Diagnostic-<日期时间>.zip` exportado contiene:
 
 | Archivo | Formato | Descripción |
 |---------|---------|-------------|
@@ -185,11 +193,11 @@ El `AppPorts-Diagnostic-<datetime>.zip` exportado contiene:
 | `diagnostic-summary.txt` | Texto plano | Resumen de diagnóstico legible |
 | `recent-operations.json` | JSON | Los 100 registros de operaciones más recientes |
 | `recent-failures.json` | JSON | Las 20 operaciones fallidas/con advertencia más recientes |
-| `AppPorts_Log.share-safe.txt` | Texto plano | Registro completo (censurado) |
+| `AppPorts_Log.share-safe.txt` | Texto plano | Registro completo (anonimizado) |
 
 ### Protección de Privacidad
 
-Los archivos de registro en el paquete de diagnóstico están censurados:
+Los archivos de registro en el paquete de diagnóstico están anonimizados:
 
 | Contenido Original | Reemplazado Con |
 |--------------------|-----------------|

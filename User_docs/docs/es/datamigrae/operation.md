@@ -2,145 +2,111 @@
 outline: deep
 ---
 
-# Guía de Operación de Migración de Datos
+# Guía práctica de migración de datos
 
-Esta página cubre el flujo de trabajo práctico para la migración de directorios de datos. Para detalles de implementación técnica, consulte [Implementación Básica](/es/datamigrae/baseinfo).
+Esta página explica cómo migrar directorios de datos. Para los detalles técnicos, consulte el [funcionamiento](/es/datamigrae/baseinfo).
 
-## Encontrar Directorios de Datos Asociados a Aplicaciones
+## Buscar los directorios asociados a una app
 
-1. Cambie a la pestaña "Directorios de Datos" en la ventana principal de AppPorts
-2. El panel izquierdo muestra todas las aplicaciones instaladas
-3. Haga clic en una aplicación; el panel derecho muestra sus directorios de datos asociados bajo `~/Library/`
+1. Abra la pestaña «Directorios de datos» en la ventana principal de AppPorts.
+2. En la parte superior, cambie entre «Directorios de herramientas» y «App Data».
+3. Para los datos de apps, seleccione una app a la izquierda. A la derecha aparecerán sus directorios asociados en `~/Library/`.
 
-AppPorts escanea automáticamente los siguientes directorios, haciendo coincidir por Bundle ID o nombre de la aplicación:
+AppPorts busca las siguientes ubicaciones mediante el Bundle ID o el nombre de la app:
 
-| Ruta de Escaneo | Método de Coincidencia |
-|-----------------|----------------------|
-| `~/Library/Application Support/` | Bundle ID o nombre de app |
-| `~/Library/Preferences/` | Bundle ID o nombre de app |
-| `~/Library/Containers/` | Bundle ID |
-| `~/Library/Group Containers/` | Bundle ID |
-| `~/Library/Caches/` | Bundle ID o nombre de app |
-| `~/Library/WebKit/` | Bundle ID |
-| `~/Library/HTTPStorages/` | Bundle ID |
-| `~/Library/Application Scripts/` | Bundle ID |
-| `~/Library/Logs/` | Nombre de app |
-| `~/Library/Saved Application State/` | Nombre de app |
+| Ruta analizada | Coincidencia | Método de migración |
+|------|------|------|
+| `~/Library/Application Support/` | Bundle ID o nombre de la app | Enlace simbólico |
+| `~/Library/Preferences/` | Bundle ID o nombre de la app | Enlace simbólico |
+| `~/Library/Containers/` | Bundle ID | **Migración por montaje** |
+| `~/Library/Group Containers/` | Bundle ID | **Migración por montaje** |
+| `~/Library/Caches/` | Bundle ID o nombre de la app | Enlace simbólico |
+| `~/Library/WebKit/` | Bundle ID | Enlace simbólico |
+| `~/Library/HTTPStorages/` | Bundle ID | Enlace simbólico |
+| `~/Library/Application Scripts/` | Bundle ID | Enlace simbólico |
+| `~/Library/Logs/` | Nombre de la app | Enlace simbólico |
+| `~/Library/Saved Application State/` | Nombre de la app | Enlace simbólico |
 
-## Directorios de Herramientas (Dot-Folders)
+Para saber por qué los contenedores son distintos, consulte [Migración por montaje](/es/datamigrae/mount-migration).
 
-AppPorts puede detectar automáticamente dot-folders creados por herramientas de desarrollo comunes en el directorio home del usuario:
+## Directorios de herramientas
 
-1. Cambie a la subpestaña "Directorios de Herramientas" en la pestaña Directorios de Datos
-2. La página lista todos los directorios de herramientas detectados con sus tamaños
-3. Cada directorio muestra un marcador de prioridad (recommended/optional) y estado
+AppPorts reconoce los directorios que crean las herramientas de desarrollo habituales en la carpeta de inicio, como `~/.npm` y `~/.gradle`:
 
-Si falta un directorio de herramienta local pero la ubicación canónica del almacenamiento externo seleccionado todavía contiene un directorio gestionado por AppPorts, el elemento aparece como "Necesita Revinculación". Al cambiar de almacenamiento externo, AppPorts vuelve a escanear los directorios de herramientas y actualiza este estado. Los archivos normales no se tratan como directorios revinculables.
+1. En «Directorios de datos», cambie a «Directorios de herramientas».
+2. La lista muestra los directorios reconocidos, su tamaño, prioridad y estado.
 
-Para la lista completa soportada, consulte [Detección de Directorios de Herramientas](/es/datamigrae/tools).
+Si no existe el directorio local pero sigue habiendo un directorio gestionado por AppPorts en la ubicación canónica externa, aparece «Pendiente de reenlace». Consulte la lista en [Reconocimiento de directorios de herramientas](/es/datamigrae/tools).
 
-## Migración de Directorios (Carpetas Personalizadas)
+## Migración de carpetas personalizadas
 
-La pestaña "Migración de Directorios" migra carpetas de usuario arbitrarias. Es útil para proyectos grandes, modelos, bibliotecas de recursos o cachés de herramientas que desea mover al almacenamiento externo.
+La pestaña «Directory Migration» permite migrar cualquier carpeta dentro de la carpeta de inicio y resulta útil para proyectos grandes, modelos y bibliotecas de recursos.
 
-1. Cambie a "Migración de Directorios" en la ventana principal
-2. Haga clic en el botón "+" del encabezado "Carpetas Locales"
-3. Elija la carpeta local a migrar y luego el directorio raíz de destino en el almacenamiento externo
-4. AppPorts usa `raíz destino/nombre de carpeta local` como destino externo, guarda la configuración e inicia la migración
+1. Abra «Directory Migration».
+2. Pulse «+» en el encabezado «Local Folders».
+3. Elija la carpeta local y después el directorio raíz de destino externo. El destino es `目标根目录/文件夹名`.
 
-Para evitar copias recursivas, migración de directorios del sistema o tomar control de una ruta incorrecta, se aplican estas comprobaciones:
+Reglas de validación: la carpeta local debe estar dentro de la carpeta de inicio, sin ser esta misma; ni su ruta ni sus padres pueden ser enlaces simbólicos; no puede contener otro directorio gestionado ni estar contenida en él. El destino externo no puede estar dentro de la carpeta de inicio, ni contener la carpeta local o estar contenido en ella.
 
-- La carpeta local debe estar dentro del directorio home del usuario actual y no puede ser todo el home
-- La ruta local y sus rutas superiores no deben ser enlaces simbólicos
-- La carpeta local no debe solaparse con un directorio de datos o entrada de migración ya gestionada
-- La raíz de destino externa debe ser una carpeta y no debe estar dentro del home del usuario actual
-- El destino externo final no debe estar dentro de la carpeta local, y la carpeta local no debe estar dentro del destino externo final
+Después de migrar, el panel local muestra el estado de la ruta original y el externo el de la copia. Puede usar «Volver a enlazar» o «Restaurar». Quitar la configuración elimina únicamente el registro, no los datos.
 
-Después de la migración, el panel local muestra el estado de la ruta original y el panel externo muestra el estado de la copia externa. Seleccione elementos en el panel externo para "Revincular carpeta" o "Restaurar carpeta". Quitar una configuración solo la elimina de la lista de migración; no borra datos reales automáticamente.
+## Migración mediante enlace simbólico
 
-## Operaciones de Migración
+Se aplica a todos los directorios fuera de los contenedores.
 
-### Migración de Directorio Individual
+1. Busque el directorio y pulse «Migrate».
+2. AppPorts copia los datos al disco externo, escribe el marcador de gestión, renombra el directorio original como copia de seguridad, crea el enlace en la ruta original y elimina la copia de seguridad.
+3. Al terminar, el estado cambia a «Enlazado».
 
-1. Encuentre el directorio a migrar en la lista de directorios de datos
-2. Haga clic en el botón "Migrar" a la derecha
-3. AppPorts ejecuta los siguientes pasos:
-   - Copia el directorio al almacenamiento externo
-   - Escribe metadatos de enlace gestionado
-   - Elimina el directorio local original
-   - Crea un enlace simbólico
-
-### Re-firmado Automático
-
-Cuando "Re-firmado automático" está habilitado en la configuración, la migración del directorio de datos activa automáticamente el firmado para la app asociada:
-
-1. **Antes de la migración**: Respalda la firma original de la **ruta real externa** de la app asociada (no el shell local)
-2. **Después de la migración**: Ejecuta re-firmado Ad-hoc en la **app real externa** (modo silencioso; los fallos no muestran diálogo)
-
-Para apps vinculadas, AppPorts resuelve automáticamente la ruta real de la app detrás del shell Stub Portal o el enlace simbólico, asegurando que los cambios de firma se apliquen al paquete de aplicación real en lugar de un shell local inválido.
-
-::: tip 💡 No se requiere acción manual
-Con el re-firmado automático habilitado, el flujo de trabajo de migración del directorio de datos está completamente automatizado. El respaldo de firma y el re-firmado ambos apuntan a la ruta real de la app — no se requiere intervención manual.
+::: tip Volver a firmar después de la migración
+El interruptor «Volver a firmar después de la migración» está en la barra de herramientas de directorios de datos y viene desactivado. Si se activa, AppPorts vuelve a firmar con Ad-hoc la app asociada tras migrar, solo para tratar el aviso de que está dañada; omite las apps aisladas. Normalmente no es necesario activarlo. Consulte [Firma y prevención de cierres inesperados](/es/datamigrae/resign).
 :::
 
-### Contexto de Logs
+## Migración por montaje
 
-Las operaciones de directorio de datos (migración, restauración, normalización, re-vinculación) incluyen automáticamente información de contexto de la app asociada en los logs:
+Se aplica a los directorios de `Containers` y `Group Containers`. El botón muestra «Migración por montaje».
+
+1. Compruebe que el disco externo sea APFS y cierre la app asociada.
+2. Pulse «Migración por montaje», lea las tres indicaciones de la confirmación y continúe.
+3. AppPorts crea un volumen externo, copia los datos y lo monta en el directorio original.
+4. El estado pasa a «Montado». Al abrir la app por primera vez, permita el acceso en el diálogo del sistema.
+
+Consulte la explicación completa en [Migración por montaje](/es/datamigrae/mount-migration).
+
+## Restauración
+
+**Directorio migrado con enlace simbólico** (estado «Enlazado»): pulse «Restaurar». AppPorts copia los datos de vuelta al Mac, elimina el enlace y después la copia externa.
+
+**Directorio migrado por montaje** (estado «Montado» o «Montaje pendiente»): pulse «Restaurar». AppPorts copia los datos del volumen al Mac, desmonta el volumen y lo elimina. Mantenga el disco externo conectado.
+
+Ambas restauraciones copian primero los datos y después cambian las rutas. Un fallo intermedio no hace perder los datos.
+
+## Resolver estados anómalos
+
+| Estado | Significado | Acción |
+|------|------|------|
+| Necesita normalización | Enlace gestionado por AppPorts cuya ruta externa no es la canónica | «Normalizar» mueve los datos a la ruta canónica y recrea el enlace |
+| Pendiente de reenlace | Los datos externos siguen ahí, pero falta el enlace local | «Volver a enlazar» recrea el enlace simbólico |
+| Enlace simbólico existente | Enlace creado fuera de AppPorts | «Detalles del enlace» permite incorporarlo a la gestión |
+| Montaje pendiente | El volumen está disponible, pero no está montado | «Montar» |
+| Disco externo desconectado | No se encuentra el volumen de datos | Conecte el disco externo; AppPorts lo volverá a conectar automáticamente |
+
+El reenlace y la normalización solo se aplican a directorios. Si un archivo normal ocupa el destino externo, AppPorts se detiene y conserva ese archivo.
+
+## Contexto de los registros
+
+Las operaciones de directorios de datos incluyen información sobre la app asociada para facilitar el diagnóstico:
 
 | Campo | Descripción |
-|-------|-------------|
+|------|------|
 | `app_name` | Nombre de la app asociada |
-| `app_status` | Estado de la app (Vinculada, Local, etc.) |
-| `app_is_resigned` | Si la app ha sido re-firmada |
-| `app_bundle_id` | Bundle ID de la app (leído de la ruta real) |
-| `app_real_path` | Ruta real externa de la app |
+| `app_status` | Estado de la app |
+| `app_is_resigned` | Indica si la app se ha vuelto a firmar |
+| `app_bundle_id` | Bundle ID de la app real |
+| `app_real_path` | Ruta de la app real |
 
-Estos campos ayudan a localizar problemas con más precisión al exportar paquetes de diagnóstico.
+Las operaciones de migración por montaje también registran el nombre del volumen, su Volume UUID y la salida de los comandos `diskutil`.
 
-### Migración por Lotes
+## Vista de árbol
 
-1. Marque múltiples directorios en la lista de directorios de herramientas
-2. Haga clic en el botón "Migración por Lotes" en la parte inferior
-3. AppPorts ejecuta la migración secuencialmente
-
-::: tip 💡 Recomendaciones de Prioridad
-Los directorios de datos se clasifican en tres niveles de prioridad:
-
-- **Crítico** (`critical`): Debe funcionar después de la migración; afecta la funcionalidad principal de la aplicación
-- **Recomendado** (`recommended`): Gran ahorro de espacio; alto beneficio de migración
-- **Opcional** (`optional`): Tamaño pequeño o reconstruible
-
-Se recomienda priorizar la migración de directorios marcados como "Recomendado".
-:::
-
-## Operaciones de Restauración
-
-1. Encuentre el directorio migrado en la lista de directorios de datos (estado: "Vinculado")
-2. Haga clic en el botón "Restaurar" a la derecha
-3. AppPorts ejecuta los siguientes pasos:
-   - Elimina el enlace simbólico local
-   - Copia los datos del almacenamiento externo de vuelta a local
-   - Elimina el directorio externo (mejor esfuerzo)
-
-## Manejo de Estados Anormales
-
-### Necesita Normalización
-
-El directorio es gestionado por AppPorts, pero la ruta externa no está en la ubicación canónica. Haga clic en "Normalizar"; AppPorts moverá los datos externos a la ruta canónica y reconstruirá el enlace simbólico.
-
-### Necesita Revinculación
-
-El directorio de datos aún existe en el almacenamiento externo, pero el enlace simbólico local se perdió. Haga clic en "Revincular"; AppPorts recreará el enlace simbólico. La revinculación solo se aplica cuando el destino externo sigue siendo un directorio. Si un archivo normal ocupa el destino externo, AppPorts detiene la operación y conserva el archivo.
-
-### Enlace Suave Existente
-
-Un enlace simbólico creado por el usuario, no por AppPorts. Puede elegir "Tomar Control"; AppPorts escribirá metadatos de enlace gestionado y lo gestionará en adelante.
-
-## Vista de Árbol
-
-Para directorios de datos que contienen subdirectorios (ej., múltiples directorios de aplicaciones bajo `Application Support`), AppPorts proporciona una vista de agrupación en árbol:
-
-- El directorio principal muestra flechas de expandir/colapsar a la izquierda
-- Los subdirectorios muestran indentación jerárquica
-- Cada nodo muestra independientemente el tamaño y estado
-- Las operaciones de migración/restauración pueden realizarse en subdirectorios individuales
+Los directorios con subdirectorios aparecen en árbol: el padre tiene una flecha para desplegarlos a su izquierda, los hijos aparecen sangrados y cada nodo muestra su tamaño, estado y botones de acción.
