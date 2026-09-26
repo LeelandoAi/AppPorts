@@ -2,151 +2,95 @@
 outline: deep
 ---
 
-# Re-signing & Crash Prevention
+# Re-signing and Crash Prevention
 
 ![](https://pic.cdn.shimoko.com/appports/%E6%88%AA%E5%B1%8F2026-05-08%2008.38.37.png)
 
-## Why Apps May Crash After Data Migration
+::: warning Re-signing is not a general repair tool
+Ad-hoc re-signing replaces the developer signature and removes sandbox, app group, and Keychain entitlements. For sandboxed apps such as WeChat and App Store apps, this can prevent opening on macOS 27 and may lose login sessions. The new version first saves a complete original app, allowing the signature and entitlements to be restored later. Restoring a signature does not guarantee recovery of login sessions already lost.
 
-macOS's code signing mechanism (`codesign`) verifies the integrity of the application package, including file path structure. When AppPorts migrates an app's data directory to external storage and replaces it with a symbolic link, the signing seal is broken, causing the following issues:
+Starting with 1.8.2, AppPorts refuses to re-sign sandboxed apps by default. It is allowed only after enabling classic mode and confirming the risks. Container data now uses [mount migration](/en/datamigrae/mount-migration), without signature changes. See [Container Data, Sandboxing, and Signing Identity](/en/datamigrae/container-identity) for the background.
+:::
 
-- **Gatekeeper Block**: `codesign --verify --deep --strict` detects signature failure; the system displays a "Damaged" or "from an unidentified developer" dialog, blocking app launch
-- **Keychain Access Disruption**: Apps relying on Keychain access groups cannot read stored credentials due to signature identity changes
-- **Entitlements Failure**: Some app entitlements are bound to the signing identity; after signature changes, entitlements mismatch
+## What Re-signing Solves
 
-### High-Risk App Types
+macOS uses code signatures to verify app bundle integrity. After the app itself is moved to an external drive and only a launcher remains locally, the system may sometimes treat it as modified, show "damaged" or "unidentified developer", and refuse to open it. Applying an Ad-hoc signature to the **real app on the external drive** can let it pass verification.
 
-| App Type | Risk Level | Reason |
-|----------|------------|--------|
-| Sparkle self-updating apps | **High** | Updater may delete or replace the app, damaging symbolic links |
-| Electron self-updating apps | **High** | `electron-updater` may also interfere with apps on external storage |
-| Keychain-dependent apps | **High** | Ad-hoc signing changes the signature identity; Keychain access groups fail |
-| Mac App Store apps | **High** | SIP protection; cannot be re-signed |
-| Native self-updating apps (Chrome, Edge) | Medium | Self-update may replace external copy, invalidating local entry |
-| iOS apps (Mac version) | Low | Uses Stub Portal or whole symlink; fewer signing issues |
+This is the purpose of re-signing. It is separate from data directory migration; coupling it to container migration in older versions caused the macOS 27 problem.
 
-### High-Risk Data Directory Types
+## When Not to Use It
 
-| Data Type | Risk Level | Reason |
-|-----------|------------|--------|
-| `~/Library/Application Support/` | Medium | App may use file locks, SQLite WAL logs, or extended attributes; may behave abnormally across symbolic links |
-| `~/Library/Group Containers/` | Medium | Shared by multiple apps under the same Team; symbolic links may interfere with other apps |
-| `~/Library/Preferences/` | Low-Medium | `cfprefsd` caches plist files; symbolic links may cause reading stale data |
-| `~/Library/Caches/` | Low | Caches are rebuildable; most apps handle cache absence gracefully |
+| Situation | Explanation |
+|-----------|-------------|
+| Sandboxed apps | Refused by default; classic mode allows it after risk confirmation, but mount migration is preferred |
+| App Store apps | Protected by SIP and cannot be re-signed |
+| Apps relying on Keychain login sessions | Re-signing loses those sessions |
+| Apps with widgets or sharing extensions | App group entitlements are lost, preventing extensions from reading shared data |
+| Apps that already open normally | Do not re-sign an app that has no problem |
 
-## Re-signing Mechanism
+Consider it only when a "damaged" message actually appears after migration to external storage, and try reinstalling or downloading a fresh copy from the official website first.
 
-### Post-Migration Re-sign Confirmation
+## Actions and Settings
 
-When migrating app data under `Containers` or `Group Containers`, AppPorts asks whether to Ad-hoc re-sign the associated app after migration. Accepting backs up the original signature and re-signs the real app path after migration; declining migrates the data only.
+| Action | Location | Default | Behavior |
+|--------|----------|---------|----------|
+| Resign This App | App list right-click menu | Manual | Saves a complete backup, then signs a working copy. Refuses sandboxed apps by default; classic mode requires risk confirmation |
+| Re-sign after migration | Data Directories toolbar, visible only in classic mode | Off | Re-signs the associated app after symbolic-link migration |
+| Auto Re-sign at Login | Settings | Off for new installations | Handles legacy records only; skips new records with full snapshots to avoid bypassing the signing transaction |
+| Restore Original Signature | App list right-click menu, data toolbar, or repair panel | Manual | Restores the original app from a full backup. Legacy records can use an official original copy of the same version. No developer private key is needed |
 
-This confirmation reduces the chance that an app fails to recognize moved container data, shows an abnormal prompt, or fails to launch after migration. For apps that rely heavily on containers or Keychain access, make an independent backup before choosing.
+Sandbox detection reads the entitlements of the **real app**, not the local launcher. If `com.apple.security.app-sandbox` is true, signing is refused. [Classic Data Migration Mode](/en/settings#classic-data-migration-mode) allows it with a second confirmation every time.
 
-### Ad-hoc Signing
-
-AppPorts uses **Ad-hoc signing** (certificate-less local signing) to fix app signatures after migration. Execution command:
-
-```bash
-codesign --force --deep --sign - <app path>
-```
-
-Where `-` indicates Ad-hoc signing (without a developer certificate).
-
-### Signing Flow
+## Signing Process
 
 ```mermaid
 flowchart TD
-    A[Start re-signing] --> B[Backup original signature identity]
-    B --> C{Is app locked?}
-    C -->|Yes| D[Temporarily unlock uchg flag]
-    C -->|No| E{Is app writable?}
-    D --> E
-    E =>|Not writable & root-owned| F[Try to change ownership with admin]
-    E =>|Writable| G[Clean extended attributes]
-    F --> G
-    F -->|Failed & MAS app| H[Skip signing - SIP protection]
-    G --> I[Clean bundle root directory clutter]
-    I --> J{Is Contents a symlink?}
-    J =>|Yes| K[Temporarily replace with real directory copy]
-    J =>|No| L[Execute deep signing]
-    K --> L
-    L =>|Failed| M[Fallback to shallow signing]
-    L =>|Success| N{Was Contents temporarily replaced?}
-    M --> N
-    N =>|Yes| O[Restore symbolic link]
-    N =>|No| P[Re-lock uchg flag]
-    O --> P
-    P => Q[Signing complete]
+    A[Resolve real app and check classic-mode permission] --> B[Save complete original app and verify contents]
+    B --> C[Create a working copy on the same volume]
+    C --> D[Re-sign and verify the copy]
+    D --> E[Save original and re-signed content digests]
+    E --> F[Confirm the current app has not changed]
+    F --> G[Atomically exchange working copy and current app]
+    D -->|Failed| H[Keep current app and backup]
+    F -->|Content changed| H
+    G -->|Storage does not support safe exchange| H
 ```
 
-### Key Steps
+Local launchers are resolved to the real app first. Signing and restoration operate on the real `.app` and do not overwrite its launcher. If signing or verification of the working copy fails, the current app stays unchanged. Its existing lock state is preserved too.
 
-1. **Backup original signature identity**: Before signing, read the app's current signature identity (parse `Authority=` lines via `codesign -dvv`), save to `~/Library/Application Support/AppPorts/signature-backups/<BundleID>.plist`
+## Signature Backups and Restoration
 
-2. **Clean extended attributes**: Execute `xattr -cr` to remove resource forks, Finder info, etc., avoiding "detritus not allowed" errors during signing
+**A full backup can restore a third-party developer signature without the developer's private key.** The original signature is already contained in the app files. Restoration returns those files instead of signing again as the developer. The main executable, nested helpers, frameworks, signature resources, and original entitlements are saved together. Apps originally signed Ad-hoc or unsigned are also restored to their original states.
 
-3. **Clean bundle root directory**: Remove `.DS_Store`, `__MACOSX`, `.git`, `.svn`, and other clutter
+Backups are in `~/Library/Application Support/AppPorts/signature-backups/`, including an app-specific `.plist` record and an `original-…app` copy. Version 2 records store digests of both original and re-signed contents. Copy-on-write is preferred on supported file systems; otherwise a complete copy is needed. Leave enough space for the backup and working copy. Insufficient space or a copy failure aborts signing.
 
-4. **Handle symbolic link Contents**: If `Contents/` is a symbolic link (Deep Contents Wrapper strategy), temporarily replace it with a real directory copy, then restore the symbolic link after signing
+To restore:
 
-5. **Deep signing → shallow signing fallback**: Prefer `--deep` signing (covering all nested components); if it fails due to permission or resource fork issues, fall back to shallow signing without `--deep`
+1. Quit the app.
+2. If container data was migrated in classic mode, restore the corresponding directories in "App Data" first. Once its sandbox identity is restored, the app cannot read data outside the container through symbolic links. AppPorts checks and prevents skipping this step.
+3. Click "Restore Original Signature" in the app's right-click menu, data toolbar, or repair panel.
+4. AppPorts validates the backup, checks whether the current app has changed or been updated, verifies the original signature in a working copy, then safely replaces the current app. It removes the backup after success.
 
-6. **Retry mechanism**: When `codesign` produces "internal error" or is terminated by SIGKILL, retry up to 2 times
+**Restoration stops and preserves both the current app and backup if the app was updated, its contents changed, or the backup is damaged.** It will not overwrite a newer app with an older one or mix a newer re-signing result with an older backup. On storage without atomic exchange support, move the app back to this Mac before signing. Ordinary scans never delete recovery materials automatically.
 
-## Signature Backup & Restore
+After an official update or reinstall, if the current app passes strict signature verification and its developer identity matches the record, re-signing creates a new complete backup of the current app. The old record is archived under `signature-backups/retired/`, and its original app copy is preserved outside the new restoration workflow. Archived copies still consume disk space. Once you no longer need an older version, use its record's `snapshotName` to locate the corresponding copy before cleaning it up.
 
-### Linked App Path Resolution
+### What About Legacy Backups Containing Only an Identity Name?
 
-For linked apps (status: "Linked"), signing operations automatically resolve the **real external app path** instead of the local Stub Portal shell or symlink. Resolution strategy:
+Old `.plist` files contain the app identifier, signing identity name, path, and timestamp, but not the original program or entitlements. They cannot restore a signature. The old behavior of treating an Ad-hoc record as "remove the signature", or signing again with an identity name, was not true restoration.
 
-| Migration Method | Resolution |
-|------------------|------------|
-| Whole App Symlink | Resolves the symlink target to the external real `.app` path |
-| Stub Portal | Reads the real external app path recorded in the local portal |
+The new version preserves these records and offers "Choose Original App…". Obtain an official original `.app` for **the same app and version**. AppPorts verifies its Bundle ID, version, and signature; it also checks the developer identity if the old record includes one. Once validated, the original replaces the current real app, and the local launcher remains usable. The original copy you select is not modified.
 
-This means backup, restore, and re-signing operations always target the real application package, ensuring signature changes take effect.
+If you cannot find the same version, follow the [repair steps](/en/macos-27#repair): restore data, move the app back to this Mac, and reinstall from an official source. An old identity record alone cannot recreate a lost signature.
 
-### Backup
+## Related App-Type Risks
 
-Backup files are stored in `~/Library/Application Support/AppPorts/signature-backups/` directory, named after the **real app's** `BundleID.plist`:
+These are separate from re-signing but are often asked about together:
 
-| Field | Description |
-|-------|-------------|
-| `bundleIdentifier` | App's Bundle ID |
-| `signingIdentity` | Original signature identity (e.g., `Developer ID Application: ...` or `ad-hoc`) |
-| `originalPath` | Original app path |
-| `backupDate` | Backup timestamp |
+| App Type | Risk | Explanation |
+|----------|------|-------------|
+| Self-updating Sparkle / Electron apps | High | The updater may delete or replace the external app. Use "Locked Migration" |
+| Chrome / Edge | Medium | Updates install locally; AppPorts marks them "Pending Move Out" so you can migrate again |
+| App Store apps | High | Cannot be re-signed. On macOS 15.1+, prefer the App Store's native external installation |
 
-Backups are triggered at these times:
-
-- Before data directory migration (if auto-re-signing is enabled) — uses the real app path for backup
-- Before any signing operation (idempotent; does not overwrite existing backups)
-- Manual "Backup Signature" action
-
-### Restore
-
-When restoring a signature, AppPorts executes different strategies based on the backed-up signature identity:
-
-| Backed-up Signature Identity | Restore Behavior |
-|-----------------------------|------------------|
-| `ad-hoc` or empty | Execute `codesign --remove-signature` to remove signature; delete backup |
-| Valid developer certificate identity | Check if certificate exists in Keychain. If present, re-sign with original identity |
-| Valid developer certificate identity but certificate not on this machine | **Fallback to Ad-hoc signing**; original signature cannot be fully restored |
-
-### Restore Failure Scenarios
-
-The following scenarios cause signature restore failure or incompleteness:
-
-| Scenario | Result |
-|----------|--------|
-| Backup plist file does not exist | Throws `noBackupFound` error; cannot restore |
-| Original developer certificate not in local Keychain | Falls back to Ad-hoc signing. App can launch but Keychain access groups and some entitlements may fail |
-| Mac App Store apps (SIP protection) | Silently skipped. SIP prevents any modification to system app signatures |
-| App directory not writable & root-owned | Attempts to change ownership via admin privileges. Fails if user cancels authorization prompt |
-| Contents symbolic link target lost | `copyItem` fails in temporary replacement step; signing cannot be executed |
-| User cancels admin authorization | Throws `codesignFailed("User cancelled authorization")` |
-| Both deep and shallow signing failed | Error propagated upward; signing operation fails |
-
-::: warning ⚠️ About Lost Developer Certificates
-The most common real-world restore failure scenario is: the original app was signed by a third-party developer (e.g., `Developer ID Application: Google LLC`), but the current machine's Keychain does not have the corresponding private key. In this case, the restore operation can only generate an Ad-hoc signature; **the original signature identity cannot be fully restored**. For apps relying on specific signature identities for Keychain access groups or enterprise configuration profiles, this may cause functional anomalies.
-:::
+See [Self-Updating App Detection](/en/migration-strategy/updater-detection) and [App Types and Strategies](/en/migration-strategy/strategy-map).

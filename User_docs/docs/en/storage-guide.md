@@ -8,9 +8,9 @@ outline: deep
 
 | Configuration | Recommended Value | Description |
 |---------------|-------------------|-------------|
-| Capacity | 256 GB or above | Depends on number of migrated apps |
+| Capacity | 256 GB or above | Depends on the number of apps and data directories to migrate |
 | Interface | USB 3.0 or above / Thunderbolt | USB 2.0 is slow; large app migration takes longer |
-| File System | APFS | Supports clones, snapshots, best performance |
+| File System | APFS | The only supported format for migrating container data; also supports clones, snapshots, and space sharing, with the best performance |
 
 ## Interface Performance Comparison
 
@@ -29,6 +29,7 @@ outline: deep
 - Supports clones, snapshots, space sharing
 - Best performance, especially for SSDs
 - Native macOS support
+- **Migrating container data (`~/Library/Containers/`, such as WeChat chat history) requires an APFS external drive.** See the explanation and experiments in [Why External Drives Must Use APFS](/en/why-apfs).
 
 ### HFS+
 
@@ -42,6 +43,7 @@ outline: deep
 - Does not support hard links and clones
 - Relatively lower performance
 - Suitable for scenarios requiring use across multiple systems
+- Cannot be used for container data migration. If you also need Windows compatibility, use a separate APFS partition for AppPorts. If exFAT occupies the whole drive, the built-in tools cannot shrink it directly; back it up before repartitioning. See [Partition requirements and preparation](/en/why-apfs#prepare-apfs).
 
 ## Capacity Planning
 
@@ -67,5 +69,6 @@ AppPorts' external storage usage after migration depends on the size of migrated
 - External storage must remain connected; migrated apps and data directories cannot be used offline
 - Regularly back up data on external storage
 - Avoid unplugging external storage during migration
+- Quit apps that use external data before unplugging the drive. For mount-migrated directories, click "Unmount" in AppPorts first.
 - Do not manually place regular files at AppPorts external data-directory target paths; AppPorts only relinks or normalizes real directories
-- If external storage fails, you can move apps back to local via AppPorts
+- If external storage fails, try moving apps back to this Mac with AppPorts after restoring the connection

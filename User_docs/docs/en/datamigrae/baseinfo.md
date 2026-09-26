@@ -2,100 +2,97 @@
 outline: deep
 ---
 
-# Data Migration Basic Implementation
+# How Data Migration Works
 
 ![](https://pic.cdn.shimoko.com/appports/%E6%88%AA%E5%B1%8F2026-05-08%2008.38.05.png)
 
-AppPorts' data migration feature migrates app-associated data directories (such as `~/Library/Application Support`, `~/Library/Caches`, etc.) to external storage to free up local disk space.
+AppPorts moves an app's associated data directories to an external drive to free up local space. It uses two strategies, depending on the directory's location:
 
-## Core Strategy: Symbolic Link
+| Directory | Strategy | Reason |
+|-----------|----------|--------|
+| `~/Library/Containers/`, `~/Library/Group Containers/` | Mount migration | The sandbox checks the resolved path and rejects symbolic links that lead outside the container |
+| Other `~/Library/` subdirectories, tool directories, and custom folders | Symbolic links | These are not restricted by the sandbox, so symbolic links are the simplest approach |
 
-Data directory migration uses the **Whole Symlink** strategy:
+This page covers symbolic links. For the other strategy, see [Mount Migration](/en/datamigrae/mount-migration).
 
-1. Copy the entire original local directory to external storage
-2. Write managed link metadata (`.appports-link-metadata.plist`) to the external directory
-3. Rename the original local directory to a hidden safety backup on the same volume
-4. Create a symbolic link at the original path pointing to the external copy
-5. Clean up the local safety backup after the symbolic link is created successfully
+## Symbolic-Link Strategy
+
+1. Copy the entire local directory to the external drive.
+2. Write the management marker `.appports-link-metadata.plist` to the external directory.
+3. Rename the original local directory to a hidden safety backup on the same volume.
+4. Create a symbolic link at the original path, pointing to the external copy.
+5. Remove the safety backup after the link is created successfully.
 
 ```
 ~/Library/Application Support/SomeApp
-    → /Volumes/External/AppPortsData/SomeApp  (symlink)
+    → /Volumes/External/AppPortsData/SomeApp  （符号链接）
 ```
-
-## Migration Flow
 
 ```mermaid
 flowchart TD
-    A[Select data directory] --> B{Permission & protection check}
-    B -->|Failed| Z[Terminate]
-    B -->|Passed| C{Target path conflict detection}
-    C -->|Managed metadata fully matches| D[Auto-recovery mode]
+    A[Select data directory] --> B{Check permissions and protection}
+    B -->|Failed| Z[Stop]
+    B -->|Passed| C{Check destination conflicts}
+    C -->|Management marker matches fully| D[Automatic recovery mode]
     C -->|Real directory conflict| Y[Stop and report conflict]
-    C -->|No conflict| E[Copy to external storage]
+    C -->|No conflict| E[Copy to external drive]
     D --> E
-    E --> F[Write managed link metadata]
-    F --> G[Rename local directory to safety backup]
+    E --> F[Write management marker]
+    F --> G[Rename to local safety backup]
     G -->|Failed| H[Keep external copy and stop]
-    G -->|Success| I[Create symbolic link]
+    G -->|Succeeded| I[Create symbolic link]
     I -->|Failed| J[Restore local safety backup and keep external copy]
-    I -->|Success| K[Clean local safety backup]
-    K -->|Success| L[Migration complete]
-    K -->|Failed| M[Migration complete; safety backup remains]
+    I -->|Succeeded| K[Remove local safety backup]
+    K -->|Succeeded| L[Migration complete]
+    K -->|Failed| M[Migration complete with safety backup retained]
 ```
 
-## Managed Link Metadata
+## Management Marker
 
-AppPorts writes a `.appports-link-metadata.plist` file in the external directory to identify that the directory is managed by AppPorts. The metadata includes:
+The `.appports-link-metadata.plist` file in the external directory identifies it as managed by AppPorts:
 
 | Field | Description |
 |-------|-------------|
-| `schemaVersion` | Metadata version number (currently 1) |
-| `managedBy` | Manager identifier (`com.shimoko.AppPorts`) |
+| `schemaVersion` | Format version, currently 1 |
+| `managedBy` | `com.shimoko.AppPorts` |
 | `sourcePath` | Original local path |
-| `destinationPath` | External storage target path |
+| `destinationPath` | External destination path |
 | `dataDirType` | Data directory type |
 
-This metadata is used during scanning to distinguish AppPorts-managed links from user-created symbolic links, and supports automatic recovery when migration is interrupted.
+The scanner uses this marker to distinguish AppPorts links from user-created links, and to resume interrupted migrations automatically. Matching is strict: all five fields must agree before a managed directory can be reused. Otherwise it is treated as a conflict. Similar directory sizes are never sufficient reason to take over or overwrite data.
 
-Automatic recovery uses strict matching. When the external target already exists, AppPorts only treats it as recoverable if `schemaVersion`, `managedBy`, `sourcePath`, `destinationPath`, and `dataDirType` all match the current operation. A real directory without matching metadata is treated as a conflict; AppPorts no longer recovers or takes over based on similar directory size.
-
-Relinking and normalization only operate on directories. AppPorts rejects external regular files instead of relinking or moving them as data directories, preventing a file from being replaced by a local symbolic link.
+Relinking and normalization work only with directories. AppPorts will not relink a regular external file as if it were a directory.
 
 ## Supported Data Directory Types
 
-| Type | Path Example |
-|------|-------------|
-| `applicationSupport` | `~/Library/Application Support/` |
-| `preferences` | `~/Library/Preferences/` |
-| `containers` | `~/Library/Containers/` |
-| `groupContainers` | `~/Library/Group Containers/` |
-| `caches` | `~/Library/Caches/` |
-| `webKit` | `~/Library/WebKit/` |
-| `httpStorages` | `~/Library/HTTPStorages/` |
-| `applicationScripts` | `~/Library/Application Scripts/` |
-| `logs` | `~/Library/Logs/` |
-| `savedState` | `~/Library/Saved Application State/` |
-| `dotFolder` | `~/.npm`, `~/.vscode`, etc. |
-| `custom` | User-defined path |
+| Type | Path | Strategy |
+|------|------|----------|
+| `applicationSupport` | `~/Library/Application Support/` | Symbolic link |
+| `preferences` | `~/Library/Preferences/` | Symbolic link |
+| `containers` | `~/Library/Containers/` | Mount |
+| `groupContainers` | `~/Library/Group Containers/` | Mount |
+| `caches` | `~/Library/Caches/` | Symbolic link |
+| `webKit` | `~/Library/WebKit/` | Symbolic link |
+| `httpStorages` | `~/Library/HTTPStorages/` | Symbolic link |
+| `applicationScripts` | `~/Library/Application Scripts/` | Symbolic link |
+| `logs` | `~/Library/Logs/` | Symbolic link |
+| `savedState` | `~/Library/Saved Application State/` | Symbolic link |
+| `dotFolder` | `~/.npm`, `~/.vscode`, etc. | Symbolic link |
+| `custom` | User-selected path | Symbolic link |
 
-## Restore Flow
+## Restore Process
 
-1. Verify local path is a symbolic link pointing to a valid external directory
-2. Remove local symbolic link
-3. Copy external directory back to local
-4. Delete external directory (best effort)
+1. Confirm that the local path is a symbolic link pointing to a valid external directory.
+2. Copy the external directory to a local staging directory.
+3. Delete the symbolic link and rename the staging directory to the original path.
+4. Delete the external directory on a best-effort basis.
 
-If copying fails, automatically rebuild the symbolic link to maintain consistency.
+If copying fails, the symbolic link is left unchanged. If renaming fails, the link is recreated and the staging directory is kept for manual recovery.
 
-## Error Handling & Rollback
+## Error Handling and Rollback
 
-Each critical step in the migration process includes rollback mechanisms:
-
-- **Copy failure**: No further actions taken; clean up copied external files
-- **Destination conflict**: If the external target already contains a real directory without matching metadata, migration stops and leaves both sides untouched
-- **Move to local safety backup failure**: Stop migration and keep the external copy; the local source is not deleted
-- **Create symbolic link failure**: Restore the local safety backup to the original path when possible, and keep the external copy to avoid losing both sides
-- **Safety backup cleanup failure**: Migration is still considered complete; a `.appports-migration-backup-*` folder remains locally and can be removed manually after verification
-
-This design ensures no data loss and consistent system state in the event of failure at any stage.
+- **Copy fails**: Remove the external files copied so far and perform no further steps.
+- **Destination conflict**: If a real external directory already exists and its marker does not match, stop and preserve both copies.
+- **Renaming to the safety backup fails**: Stop and keep the external copy; leave the local source unchanged.
+- **Creating the symbolic link fails**: Restore the safety backup to its original path and keep the external copy.
+- **Removing the safety backup fails**: Migration is complete, but a local `.appports-migration-backup-*` remains. You can remove it manually after verifying the result.

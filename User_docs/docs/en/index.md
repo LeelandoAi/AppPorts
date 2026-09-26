@@ -24,10 +24,10 @@ features:
     details: "One-click migration of large apps to external drives. No shortcut arrows in Finder; Launchpad and app menu work normally."
   - icon: 🔒
     title: "Auto-Update Protection"
-    details: "Automatically detects Sparkle, Electron self-updating apps. Lock migration prevents external apps from being damaged by updaters."
+    details: "Automatically detects self-updating apps such as Sparkle and Electron apps and offers Locked Migration. A newer local app is marked Pending Move Out when the external copy is older."
   - icon: 📦
     title: "Data Directory Management"
-    details: "Migrate ~/Library/ subdirectories, ~/.npm and more to external storage with tree view, search, and sorting."
+    details: "Move ~/Library/ subdirectories, ~/.npm and other data directories to external storage. Sandbox container data, such as WeChat chat history, uses mount migration to an APFS external drive, leaving the signature unchanged."
 ---
 
 <script setup lang="ts">

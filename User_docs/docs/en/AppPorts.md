@@ -8,35 +8,35 @@ This guide systematically introduces AppPorts' features, design principles, and 
 
 ## Overview
 
-AppPorts is an application migration and linking tool designed for [macOS](https://www.apple.com/macos/), supporting the migration of large applications to external storage devices while maintaining full system functionality and consistency.
+AppPorts is an app migration and linking tool designed for [macOS](https://www.apple.com/macos/). It moves large apps to external storage while keeping Finder, Launchpad, app menus, and system updates as consistent as possible.
 
 ### AppPorts Philosophy
 
 | Principle | Description |
 |-----------|-------------|
-| **Transparent Experience** | Ensures the user experience and operating system perceive the app as still running from internal storage |
+| **Transparent Experience** | Aims to let users and the operating system use migrated apps much like local apps |
 | **Stable Strategy** | Prioritizes proven, more stable migration approaches |
 | **Low System Burden** | No daemons, avoids continuous system resource consumption |
-| **Broad Internationalization** | Prioritizes covering more languages; translation breadth over precision |
+| **Broad Internationalization** | Prioritizes broad language coverage and continually improves translation quality |
 | **Accessibility Friendly** | Comprehensive accessibility support |
 
 ## Core Features
 
 - **Badge-free Migration**: One-click migration of large apps to external drives. Locally retains only a lightweight launcher shell; Finder does not display shortcut arrows; Launchpad and macOS app menu work normally.
 - **Auto-Update Protection**: Automatically detects apps with auto-update support (Sparkle, Electron, Chrome, etc.), providing a "Locked Migration" option to prevent auto-updaters from deleting or overwriting apps on the external drive.
+- **Version Sync Indicators**: When the real local app is newer than the external copy, "Pending Move Out" indicates that the local version can be migrated to replace the older external version.
 - **Stub Portal Version Sync**: When external apps are updated via the App Store, the local Stub Portal's version info is automatically synced, keeping the "Open With" menu accurate.
 - **Custom Scan Directories**: Add extra local app scan directories (e.g., JetBrains Toolbox, Steam). Directories are persisted and automatically monitored for changes.
-- **Code Signature Management**: After migration, if a "Damaged" prompt appears, one-click re-signing via right-click menu. Supports backing up and restoring original signatures; auto re-signing after data directory migration.
+- **Code Signature Management**: If a "damaged" message appears after migrating the app itself, re-sign it from the right-click menu. Original signatures can be backed up and restored. Sandboxed apps are not re-signed.
 - **macOS 15.1+ App Store Support**: Supports installing App Store apps directly to external drives with in-place updates on the external drive.
 - **One-Click Restore**: Supports migrating apps back to local storage with automatic link removal. Automatic recovery on interrupted migration.
-- **Data Directory Management**: Supports migrating app data directories (`~/Library/` subdirectories, `~/.npm`, etc.) to external storage, with tree view grouping, search, and sorting.
+- **Data Directory Management**: Move app data directories (`~/Library/` subdirectories, `~/.npm`, etc.) to external storage, with tree grouping, search, sorting, and strict validation of restore targets using AppPorts metadata.
+- **Mount Migration for Container Data**: Move sandbox container data, such as WeChat chat history, by creating a dedicated volume on an APFS external drive and mounting it at the original directory, without changing the app's signature.
 - **Directory Migration**: Move arbitrary real folders under the user's home directory to external storage, useful for large projects, models, asset libraries, and tool caches, with relink, restore, and path-overlap validation.
 
-## Glossary
+## Migration Strategies
 
-### Migration Strategies
-
-#### Deep Contents Wrapper (Contents Directory Migration)
+### Deep Contents Wrapper (Contents Directory Migration)
 
 The standard file structure of a macOS application is as follows:
 
@@ -56,7 +56,7 @@ The Deep Contents Wrapper strategy migrates all application content to external 
 The main flaw of Deep Contents Wrapper is that auto-updaters follow symbolic links and directly modify files on external storage, potentially corrupting the application.
 :::
 
-#### Stub Portal
+### Stub Portal
 
 The Stub Portal approach creates a minimal `.app` shell locally, containing only these four items:
 
@@ -69,7 +69,7 @@ The Stub Portal approach creates a minimal `.app` shell locally, containing only
 
 When the user clicks this shell, macOS executes the `launcher` script, opening the real application on the external drive via the `open` command. No symbolic links are present locally; auto-updaters cannot penetrate through.
 
-##### iOS Stub Portal
+### iOS Stub Portal
 
 The basic principle is the same as the standard Stub Portal, but icon handling differs. iOS app icons are not specified in `Info.plist` but stored as multiple `AppIcon.png` files in the `Wrapper/` or `WrappedBundle/` directories. The process is:
 
@@ -78,7 +78,7 @@ The basic principle is the same as the standard Stub Portal, but icon handling d
 3. Use `sips` to convert to `.icns` format
 4. Generate `Info.plist` from `iTunesMetadata.plist` (iOS apps don't include a standard `Info.plist`)
 
-#### Whole Symlink
+### Whole Symlink
 
 Creates the entire `.app` directory as a symbolic link to external storage:
 

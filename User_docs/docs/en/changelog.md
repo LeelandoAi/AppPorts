@@ -4,6 +4,39 @@ outline: deep
 
 # Changelog
 
+## v1.8.2 (In Development)
+
+### Important Changes
+
+- **Container data now uses mount migration**: directories under `~/Library/Containers/` and `~/Library/Group Containers/` no longer use symbolic links. AppPorts creates dedicated volumes on an APFS external drive and mounts them at the original directories, without changing app signatures. An APFS drive is required; allow Removable Volumes access on first launch. See [Mount Migration](/en/datamigrae/mount-migration).
+- **Sandboxed apps are no longer re-signed**: the right-click menu, "Re-sign after migration" switch, and login re-signing script skip sandboxed apps. Re-signing by older versions may prevent them from opening on macOS 27; see [Upgrading to macOS 27](/en/macos-27).
+- **Fixed "Restore Original Signature"**: a complete original app is backed up before re-signing, and a verified working copy safely replaces the current app. Original signatures and entitlements can be restored without the developer's private key. Legacy records can use an official original copy of the same version. Updated apps and damaged backups are not forcibly overwritten.
+- **Automatic detection and repair guidance for replaced signatures**: the app list shows a red "Signature replaced" badge and reminds you once at startup. "Show repair steps" opens a panel guiding you through restoring data, moving the app back, reinstalling, and optionally using mount migration, without deleting data. The badge disappears after reinstallation restores the signature. Scans preserve recovery materials; successful restoration through AppPorts cleans up the backup.
+- **Classic data migration mode**: a new switch in Settings is off by default and requires risk confirmation. It restores the 1.8.1 symbolic-link and re-signing workflow for users already relying on it. If your drive is not APFS, keeping things as they are is recommended instead of enabling this mode.
+- "Auto Re-sign at Login" is off for new installations. Existing users with an installed login agent keep their setting.
+- "Normalize", "Relink", and "Link Details" are disabled for container directories outside classic mode, preventing symbolic links from being recreated.
+
+### Improvements
+
+- **"Mount migration" starts with a check that makes no changes, then gives relevant guidance**: unencrypted APFS storage shows the space you can free, the first-launch permission prompt, and the need to keep the drive connected. For exFAT / NTFS / HFS+, encryption, insufficient space, or a disconnected drive, AppPorts explains the reason and offers actions such as "Keep As Is", "Choose Another Location", and "View Preparation Guide" without changing anything. Readiness checks in the welcome screen and Settings use the same guidance and no longer steer non-APFS users toward classic mode.
+- **Data volumes are hidden in Finder**: newly created volumes do not automatically mount under `/Volumes`, and mounting uses `nobrowse`. Volumes mounted by earlier versions are hidden in place at the next launch or drive connection, without unmounting.
+- **Encrypted APFS drives are not yet supported for mount migration**: new volumes do not inherit the original volume's password. AppPorts stops and explains instead of silently creating an unencrypted volume.
+- **Free-space checks before migration and restoration**: insufficient external or local space stops the operation before volume creation or copying.
+- **Safer restoration**: only the empty mount point is deleted after unmounting, without recursive deletion. Staging directories now use hidden names. If the final step cannot complete, the external volume and record remain intact and AppPorts reports the local copy's location.
+- **Only operate on AppPorts volumes**: mount, unmount, and restore verify the volume identity at the mount point. Operations do not start without the lock shared with the login agent. An unreadable migration record file is never treated as an empty record and overwritten.
+- **Automatic login-agent path updates**: each launch checks the agent's executable path and updates it after AppPorts is moved or upgraded. Running directly from a DMG or Downloads through a temporary App Translocation path blocks new mount migrations and asks you to move AppPorts to Applications first.
+- Mount migration retries with the system administrator password prompt on systems requiring elevated privileges, such as macOS 12.
+- Container volumes remount after login and when a drive connects while AppPorts is running. The login agent also watches `/Volumes` to mount before login apps start. A cross-process lock prevents the agent and AppPorts from competing for mount points during migration or restoration.
+- **The login agent is no longer deferred behind login items**: it uses `KeepAlive` to declare that it needs to run, restarting only after failure, and removes `ProcessType: Background`. The user domain stays in on-demand-only mode for a period after login; the old definition could be delayed about 20 seconds while login apps started in 3 seconds.
+- **Volumes mounted automatically by macOS are remounted correctly**: when a volume is already mounted under `/Volumes`, `diskutil mount -mountPoint` can ignore the requested path, print `mounted`, and return 0. This occurred on 2026-09-21 and 09-23: the command succeeded while the intended mount point remained empty, so WeChat read an empty directory. AppPorts now verifies the actual destination after every mount and, if necessary, unmounts from `/Volumes` and retries, up to 3 rounds.
+- **Removed the most expensive boot-time `diskutil` query**: macOS first mounts volumes under `/Volumes/<卷名>`. The agent now identifies them using `statfs` and a volume-root marker in microseconds, avoiding a `diskutil info` query measured at 9 seconds. On a real Mac, a round from locating the volume to completing its mount now needs only `unmount` and `mount`, taking about 1 second.
+- **The login agent keeps waiting for slow drives**: it watches `/Volumes` within the process and retries after real changes. Tests measured about 1 second from volume appearance to completed mounting. With no events, it checks every 20 seconds as a fallback, over a total 180-second window. It does not hold the shared lock while waiting.
+- **Idle login-agent runs no longer flood logs**: launchd matches `WatchPaths` using FSEvents path prefixes, so any write on an external drive can wake the agent even when no action is needed. An idle run now writes only 3 lines; detailed per-record logs appear only for actual mounting, offline volumes, or failures.
+- **Halved `diskutil` calls in the mounting path**: queries per volume drop from 4 to 2 by checking availability and the current mount location in one `diskutil info` call. Each query can take around a second during a busy boot, saving several seconds.
+- **Spotlight no longer indexes data volumes**: volume creation writes `.metadata_never_index` at the root and removes any `.Spotlight-V100` already created, which totaled 110 MB across two tested WeChat volumes. Older migrated volumes receive the marker on their next mount. It stays with the volume and is not copied back to the local directory during restoration.
+- Fixed incorrect container matches when a Bundle ID ends with generic words such as `mac` or `desktop`, for example Termius listing QQ Music containers.
+- Fixed missing subdirectory scans when container paths appear in `/private/var` form.
+
 ## v1.8.0
 
 ### New Features

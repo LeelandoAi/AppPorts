@@ -46,7 +46,12 @@ AppPorts matches local and external apps by Bundle ID first, then falls back to 
 
 | Badge | Icon | Color | Meaning |
 |-------|------|-------|---------|
-| Re-signed | `seal.fill` | Cyan | App has been Ad-hoc re-signed (executed when "Damaged" appears after migration) |
+| Resigned | `seal.fill` | Cyan | The app currently has an Ad-hoc signature, and AppPorts has a signature backup for it |
+| Signature replaced | `exclamationmark.shield.fill` | Red | AppPorts replaced the developer signature with an Ad-hoc signature. The app may not open on macOS 27. Click for details, or right-click and choose "Show repair steps" to open the repair panel. See [Upgrading to macOS 27](/en/macos-27) |
+
+::: tip "Resigned" and "Signature replaced"
+Both mean the app currently has an Ad-hoc signature. The difference is **its original signature**. An app marked "Resigned" originally had no developer signature, or its original signature can no longer be confirmed; re-signing simply lets it open normally. An app marked "Signature replaced" originally had a developer signature that was replaced with Ad-hoc. This may prevent sandboxed apps from opening on macOS 27, so AppPorts highlights them in red and provides repair steps.
+:::
 
 ::: tip 💡 Special Note on Store Label
 When an app meets the following conditions, the "Store" label becomes clickable and displays macOS 15.1+ native installation instructions:
@@ -58,32 +63,35 @@ When an app meets the following conditions, the "Store" label becomes clickable 
 
 | Status | Color | Meaning |
 |--------|-------|---------|
-| Local | Secondary color | Directory on local storage, not migrated |
-| Linked | Green | Migrated to external storage; local is a symbolic link |
-| Needs Normalization | Yellow | AppPorts-managed link, but external path not at canonical location; "Normalize" operation recommended |
-| Needs Relinking | Orange | External storage data exists but local symbolic link lost; "Relink" operation recommended |
-| Existing Soft Link | Blue | User-created symbolic link (not created by AppPorts); option to take over management |
+| Local | Secondary color | The directory is local and has not been migrated. A shield beside a container directory indicates that it uses mount migration |
+| Linked | Green | Symbolic-link migration is complete; the local link points to the external drive |
+| Mounted | Purple | Mount migration is complete; the external volume is mounted at the original directory |
+| Awaiting mount | Orange | The volume is online but is not mounted; click "Mount" |
+| Drive Not Connected | Red | The data volume cannot be found, usually because the external drive is disconnected. AppPorts reconnects it automatically when the drive is connected |
+| Needs Normalization | Yellow | An AppPorts-managed link whose external path is not in the standard location; use "Normalize" |
+| Awaiting Relink | Orange | The external data still exists but the local link is missing; use "Relink" |
+| Existing Symlink | Blue | A symbolic link created outside AppPorts; you can choose to bring it under AppPorts management |
 
 ## App Status Combinations
 
 An app may display multiple badges simultaneously:
 
 ```text
-[Linked] [Sparkle] [Running]
+[已链接] [Sparkle] [运行中]
 ```
 Meaning: App migrated to external storage, uses Sparkle auto-update framework, currently running.
 
 ```text
-[External] [Store] [Non-native]
+[外部] [商店] [非原生]
 ```
 Meaning: iOS app (Mac version) on external storage, installed via App Store.
 
 ```text
-[Orphan Link]
+[孤立链接]
 ```
 Meaning: External storage app lost or removed, but local entry still retained. Manual unlinking required.
 
 ```text
-[Pending Move Out]
+[待迁出]
 ```
 Meaning: A newer real app exists locally while the external storage still has an older copy. Re-run migration to move the local version out and replace the old external copy.

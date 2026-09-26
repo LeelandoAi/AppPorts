@@ -91,6 +91,10 @@ Error logs contain structured information:
 | `DATA-MIGRATE-DESTINATION-CONFLICT` | Data migration target already exists and metadata does not fully match |
 | `RESIGN-FAILED` | Re-signing failed (app may not pass macOS signature verification) |
 | `DATA-RESIGN-FAILED` | Auto-re-signing after data directory migration failed |
+| `RESIGN-REFUSED-SANDBOXED` | Re-signing a sandboxed app was refused |
+| `RESTORE-SIGNATURE-IDENTITY-UNAVAILABLE` | The original signing certificate is not on this Mac; restoration was refused |
+| `CONTAINER-MOUNT-*` | A mount migration stage failed, for example `CONTAINER-MOUNT-EXTERNAL-NOT-APFS` or `CONTAINER-MOUNT-SWITCH-FAILED` |
+| `CONTAINER-RESTORE-*` | A stage of restoring a mount-migrated directory failed |
 | `DATA-BACKUP-SIGNATURE-FAILED` | Signature backup before data directory migration failed (original signature cannot be restored later) |
 
 ### Data Directory Operation Context
@@ -136,9 +140,9 @@ Can be customized via:
 ### Log Format
 
 ```text
-[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] App started
+[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] 应用启动
 [2026-05-08 09:30:01] [DIAG] [session:a1b2c3d4] [pid:12345]   app_version: 1.6.1 (123)
-[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   Migration complete: 2.3 GB, 45.2 MB/s, 52.1s
+[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   迁移完成: 2.3 GB, 45.2 MB/s, 52.1s
 ```
 
 ### Log Levels

@@ -4,110 +4,99 @@ outline: deep
 
 # Troubleshooting
 
-## Migration Interruption
+## An App Does Nothing When Opened, or Its Icon Disappears Immediately
 
-### Symptoms
+The most common cause is an app previously re-signed by AppPorts being denied access to its own container after upgrading to macOS 27. This does not affect every re-signed app; WeChat is confirmed. The data is intact.
 
-Migration interrupted due to external storage disconnection, system crash, or app force quit.
+To confirm:
 
-### Resolution
+```bash
+codesign -dv --verbose=4 /Applications/<应用名>.app 2>&1 | grep -E "Signature|TeamIdentifier"
+# 出现 Signature=adhoc 和 TeamIdentifier=not set 即是
+```
 
-AppPorts has a built-in auto-recovery mechanism. After restarting AppPorts:
+Repair in this order: restore container data → reinstall from an official source → use mount migration if needed. **Do not** re-sign again or assume restoring data alone completes the repair. See [Upgrading to macOS 27](/en/macos-27#repair).
 
-1. Detects residual migration data (external copy exists but local symbolic link not created)
-2. Checks `.appports-link-metadata.plist` in the external directory
-3. If `schemaVersion`, `managedBy`, `sourcePath`, `destinationPath`, and `dataDirType` fully match, continues recovery or relinking
-4. If metadata does not match, stops automatic handling and preserves existing data for user confirmation
+## Mount Migration Fails
 
-::: tip 💡 No Manual Intervention Needed
-AppPorts' auto-recovery mechanism handles interrupted migrations on the next launch. If auto-recovery fails, you may see "Needs Normalization" or "Needs Relinking" status in the data directory list — simply execute the corresponding operation manually.
-:::
+| Message | Cause | What to Do |
+|---------|-------|------------|
+| External storage is not APFS | The drive uses exFAT / NTFS / HFS+ | Keep container data on this Mac and migrate other data normally. When ready, use an APFS drive or follow [Prepare an APFS External Drive](/en/why-apfs#prepare-apfs). Built-in tools cannot directly shrink exFAT |
+| External storage is encrypted | The drive uses encrypted APFS; a new data volume does not inherit its password | Keep things as they are, or select unencrypted APFS. See [Encrypted External Drives](/en/why-apfs#encrypted-drives) |
+| Insufficient space | Not enough space on the external drive for migration or on this Mac for restoration | Free space and retry. This check happens before creating a volume or copying; no data has been changed |
+| Disk command failed … `kDAReturnNotPrivileged` | Older systems such as macOS 12 do not let ordinary users mount at custom paths | AppPorts retries with an administrator password prompt. Enter the password. Versions before 1.8.2 did not have this step |
+| Administrator authorization cancelled | The password prompt was cancelled | Run the operation again |
+| Mount point is not empty | The app wrote local files while the volume was unmounted | Move those files elsewhere, then click "Mount" |
+| Post-mount verification failed | The volume mounted at an unexpected path | Export a diagnostic package and submit an Issue |
+| External volume not found | The drive is disconnected or the volume was deleted | Connect the drive and refresh. If the volume was deleted, its data cannot be recovered from it |
 
-## External Storage Offline
+AppPorts rolls back a failed migration by deleting the new volume and restoring the original directory. In Disk Utility, check for leftover volumes beginning with `AppPorts-`.
 
-### Symptoms
+## App Cannot See Data After Mount Migration
 
-After external storage is unplugged or disconnected, migrated apps cannot launch and data directories display red error status.
+Check in this order:
 
-### Resolution
+1. **Is the external drive connected and the volume mounted?** The directory in App Data should be "Mounted". For "Awaiting mount", click "Mount". For "Drive Not Connected", connect the drive.
+2. **Did you deny the permission prompt?** In System Settings → Privacy & Security → Files and Folders, find the app and enable Removable Volumes. Or run `tccutil reset SystemPolicyRemovableVolumes <Bundle ID>` in Terminal to ask again next time.
+3. **Is it a built-in system app?** Apps under `/System/Applications` are silently denied without a prompt. AppPorts does not support migrating their data.
+4. Check the system log:
 
-1. Reconnect external storage
-2. AppPorts' `FolderMonitor` automatically detects storage volume mounting and triggers re-scan
-3. Apps and data directories resume normal use
-4. If an external app was updated via the App Store while AppPorts was not running, the re-scan will automatically sync the version info to the local Stub Portal
+   ```bash
+   log show --last 2m --style compact 2>/dev/null | grep -E "deny\(1\)|RemovableVolumes"
+   ```
 
-::: warning ⚠️ Note
-While external storage is offline, local entries (Stub Portal) calling `open` will fail; apps cannot launch but will not crash. Data directory symbolic links point to invalid paths; associated apps may not be able to read data.
-:::
+   `kTCCServiceSystemPolicyRemovableVolumes` indicates the permission issue in step 2.
 
-## Signature Restore Failure
+## App Will Not Start After Migration
 
-### Symptoms
+1. Confirm the external drive is connected.
+2. Check its badge. "Orphan Link" means the external app is missing and its local link needs removal.
+3. If macOS says it is "damaged", try reinstalling first. If needed, consider "Resign This App" in the right-click menu. Sandboxed apps are refused; see [Re-signing and Crash Prevention](/en/datamigrae/resign).
+4. An app locked with `uchg` may be unable to self-update. This is expected.
+5. Open the logs in Finder from the menu bar and look for relevant errors.
+6. Move the app back from the external library to check whether external storage is the cause.
 
-Attempting to restore original signature fails, or the app still shows "Damaged" after restore.
+## Signature Restoration Fails
 
-### Possible Causes & Resolution
+| Cause | What to Do |
+|-------|------------|
+| Backup file is missing | No restoration record is available. Reinstall from an official source. A record may also have been cleaned up, so its absence does not prove the app was never re-signed |
+| Legacy backup does not contain the original app | Select an official original `.app` of the same version or reinstall. New full backups do not need the developer's private key |
+| App was updated or backup verification failed | Keep the current app and backup; stop replacement. Select a matching official original or reinstall |
+| System protection prevents replacing the app | Preserve the current app and backup; reinstall through the App Store or official installer |
+| App is owned by root | An administrator password prompt changes ownership. Cancelling makes the operation fail |
+| App is sandboxed | Re-signing is refused by default. If re-signed in classic mode, restore container data before restoring the original signature |
 
-| Cause | Resolution |
-|-------|-----------|
-| Backup file does not exist | Cannot restore original signature; execute Ad-hoc re-signing as alternative |
-| Original developer certificate not in local Keychain | AppPorts automatically falls back to Ad-hoc signing; app can launch but Keychain access may be abnormal |
-| Mac App Store app (SIP protection) | Cannot re-sign; SIP prevents any modification to system app signatures |
-| App directory is root-owned | AppPorts attempts to change ownership via admin privileges; authorize in the popup |
-| Contents symbolic link target lost | Cannot sign; must restore external data or restore app first |
+## Migration Is Interrupted
 
-For detailed mechanisms, see [Re-signing & Crash Prevention](/en/datamigrae/resign).
+If the external drive disconnects, the system crashes, or AppPorts is force-quit:
 
-## App Store Apps Cannot Migrate to External Drive
+- **Symbolic-link migration**: reopen AppPorts. It checks `.appports-link-metadata.plist` in the external directory and resumes only when it fully matches; otherwise it stops for you to review. Look for "Needs Normalization" or "Awaiting Relink".
+- **Mount migration**: failures during the operation roll back automatically. If AppPorts itself was force-quit, reopen it and inspect the original directory. If it is still present, the data is safe and an extra `AppPorts-` volume can be removed in Disk Utility. If the directory was renamed to `.appports-migration-backup-*`, rename it back.
 
-### macOS Versions Below 15.1
+## External Storage Is Offline
 
-macOS versions before 15.1 do not support App Store app installation to external drives. You need to:
+- Symbolic-link directories: the link points to an unavailable path, so the app cannot read the data.
+- Mount-migrated directories: appear empty, and the app does not write local data.
+- App bundles: the local launcher cannot open the external app, but the launcher itself does not crash.
 
-1. Enable "App Store App Migration" in AppPorts settings
-2. After migration, app updates require manual re-migration to overwrite
+After reconnection, AppPorts rescans and remounts migrated volumes automatically. Older systems require an administrator password once.
 
-### macOS 15.1 and Above
+## App Store Apps Cannot Be Migrated to External Storage
 
-If the App Store cannot update apps on external drives:
+**Before macOS 15.1**: native external installation is unsupported. Enable App Store app migration in AppPorts Settings and migrate manually. Repeat after updates.
 
-1. Open App Store settings
-2. Enable "Download and install large apps to an external drive"
-3. Select the same external storage as the AppPorts external storage library
+**macOS 15.1 and later**: enable "Download and install large apps to a separate disk" in App Store settings and select the same drive as AppPorts.
 
-## App Cannot Launch After Migration
+## Migration Reports an Existing Destination
 
-### Troubleshooting Steps
+- **Apps**: AppPorts stops if the external destination is neither the old copy associated with "Pending Move Out" nor a recognized old AppPorts entry. Inspect it in Finder before deciding what to do.
+- **Data directories**: an external directory without a matching AppPorts marker is not taken over or overwritten based on similar size. Check its contents and handle it manually.
+- **Moving back locally**: a real local app with the same name, or a link belonging to another external app, is not overwritten.
 
-1. **Check external storage connection**: Confirm external storage is connected and accessible
-2. **Check app status badges**:
-   - "Orphan Link" → External app lost; manual unlinking required
-   - "Damaged" → Execute re-signing
-3. **Check lock status**: If app is locked (uchg), self-updater may not be able to run
-4. **Check logs**: Menu bar → Logs → View in Finder; search for relevant error messages
-5. **Move back to local**: In External Apps library, select "Move Back to Local" to confirm if it's an external storage issue
+## The Data Directory List Looks Wrong
 
-## Destination Already Exists
-
-### Symptoms
-
-AppPorts reports that the target path already exists and cannot be overwritten during app or data migration.
-
-### Resolution
-
-- **App migration**: AppPorts only replaces a target when it is the old copy for a "Pending Move Out" app, or an AppPorts-managed old portal/remnant. Inspect the external target in Finder before deleting or renaming it manually.
-- **Data directory migration**: AppPorts requires matching metadata and no longer takes over a real directory based on similar size. Confirm the directory contents manually before retrying.
-- **Moving back to local**: AppPorts will not overwrite a same-name real local app or unrelated symlink. Confirm the local item first.
-
-## Data Directory Display Issues
-
-### Symptoms
-
-Data directory list shows incomplete or incorrect status.
-
-### Resolution
-
-1. AppPorts uses `FolderMonitor` to monitor file system changes; it usually refreshes automatically
-2. When switching apps quickly, stale scan results should not overwrite the currently selected app; wait for the current scan to finish if the list is temporarily empty
-3. If not auto-refreshed, click the refresh button in the top toolbar or switch tabs and back
-4. If the issue persists, check scan error messages in the logs
+1. AppPorts watches file-system changes and usually refreshes automatically.
+2. When switching apps quickly, old results do not overwrite the current selection. Wait for scanning if the list briefly appears empty.
+3. If it does not refresh, click Refresh at the top.
+4. For persistent problems, check scanning errors in the logs.

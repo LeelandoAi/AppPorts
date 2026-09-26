@@ -19,20 +19,34 @@ macOS 15.1 and later support native App Store app installation to external drive
 
 ## Signing Settings
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Auto Re-sign | Executes Ad-hoc re-signing on associated apps after data directory migration; container migrations ask for confirmation | Off |
-| Auto Re-sign at Login | Automatically re-signs migrated apps with expired signatures each time the user logs in | On |
+| Setting | Location | Description | Default |
+|---------|----------|-------------|---------|
+| Re-sign after migration | Top toolbar of Data Directories, **visible only in classic mode** | Applies an Ad-hoc signature to the associated app after symbolic-link migration | Off |
+| Auto Re-sign at Login | Settings | Re-signs apps recorded as originally Ad-hoc in their signature backups to handle signatures becoming invalid after a restart; skips sandboxed apps except in classic mode | Off for new installations; remains on for existing users who already installed the login agent |
 
-When enabled, each data directory migration automatically backs up the original signature and executes re-signing to avoid "Damaged" prompts after migration.
+Outside classic mode, sandboxed apps cannot be re-signed through any entry point: re-signing may prevent them from opening on macOS 27. Container data uses [mount migration](/en/datamigrae/mount-migration), which needs no signature changes.
 
-In the Data Directories view, the "Re-sign after migration" toggle is in the top toolbar. When migrating `Containers` or `Group Containers` data, AppPorts asks whether to re-sign after migration: accept to Ad-hoc re-sign the associated app, or decline to migrate data only.
+The login script does not re-sign apps with new records containing a complete original app backup. AppPorts verifies signing operations and safely replaces the app. The installed script is synchronized when AppPorts starts.
 
-When "Auto Re-sign at Login" is enabled, a LaunchAgent (`com.shimoko.AppPorts.re-sign`) is installed to scan signature backup records at each user login and automatically re-sign apps whose Ad-hoc signatures have expired. Re-sign logs are written to the AppPorts default log file.
+"Auto Re-sign at Login" installs the LaunchAgent `com.shimoko.AppPorts.re-sign` and writes to the default AppPorts log. Re-signing and backups target the real app on the external drive, rather than the local launcher. See [Re-signing and Crash Prevention](/en/datamigrae/resign).
 
-::: tip 💡 Auto-Re-signing for Linked Apps
-For linked apps (status: "Linked"), auto-re-signing automatically resolves the **real external app path** behind the Stub Portal shell or symlink, ensuring signature changes are applied to the actual application package. Backup and re-signing operations are identified by the real app's Bundle ID.
-:::
+## Classic Data Migration Mode (Not Recommended) {#classic-data-migration-mode}
+
+This switch is at the bottom of Settings and is off by default. It is retained for users who already rely on the 1.8.1 workflow and cannot switch yet. If the external drive is not APFS, keep container data on this Mac instead of enabling this mode to bypass the APFS requirement. See [Why External Drives Must Use APFS](/en/why-apfs#what-to-do). Before enabling it, select "I understand these risks" in the confirmation dialog. On macOS 27, a message beside the switch explains that re-signed sandboxed apps may not open. Enabling it changes the following:
+
+| Item | Off (default) | On |
+|------|---------------|----|
+| Container directory buttons | "Mount migration" only | "Migrate" (symbolic link) alongside "Mount migration" |
+| Re-signing dialog before container migration | Hidden | Shown, with migration only selected by default |
+| Re-signing sandboxed apps | Refused at every entry point | Allowed, with a second confirmation explaining the consequences each time |
+| "Re-sign after migration" switch | Hidden | Shown in the Data Directories toolbar |
+| "Normalize", "Relink", and "Link Details" for containers | Disabled, with instructions to restore before using mount migration | Available |
+
+Classic mode restores the complete old workflow, including its risks. Re-signed sandboxed apps may not open on macOS 27, requiring data restoration and reinstallation. AppPorts marks these apps "Signature replaced" and reminds you at startup; see [Upgrading to macOS 27](/en/macos-27). Turning classic mode off does not change existing symbolic-link migrations, and "Restore" remains available.
+
+## Mount Migration
+
+Mount migration has no separate setting. "Readiness" in Settings checks Full Disk Access, the AppPorts installation location, and the external storage format, and explains what needs attention. After the first successful mount migration, AppPorts installs the login agent `com.shimoko.AppPorts.container-mount` to remount online volumes at their container directories after login. It is uninstalled automatically when the last mount record is restored. On older systems such as macOS 12, the agent cannot display an administrator password prompt; open AppPorts after login to finish remounting.
 
 ## Logging Settings
 
@@ -51,3 +65,5 @@ For linked apps (status: "Linked"), auto-re-signing automatically resolves the *
 | Clear Log | Clears current log file contents |
 
 For detailed log descriptions, see [Logging & Diagnostics](/en/logging).
+
+Before a manual backup, re-sign, or restoration, AppPorts stops the background re-signing task for the current login and waits for its child processes to exit, so it cannot overwrite a freshly restored signature. The login agent configuration remains, and the setting applies again at the next login. If AppPorts cannot confirm that the background task has stopped, the manual operation is aborted.
