@@ -862,6 +862,98 @@ final class AppMigrationServiceTests: XCTestCase {
         XCTAssertFalse(script.contains("'\\(path)'"))
     }
 
+    // MARK: - 还原前把「本地入口记录」换成外部本体
+
+    /// 「修复步骤」等入口给到的是本地那一条记录（path 指向 stub / 符号链接），
+    /// 直接拿去还原会变成「入口还原到入口自己」，入口检查认不出，于是报
+    /// 「本地已存在同名真实文件，无法覆盖」。这里验证能解析出外部本体记录。
+    func testExternalCounterpartResolvesStubPortalToExternalRecord() throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let localAppURL = workspace.localAppsURL.appendingPathComponent("Mole.app")
+        let externalAppURL = workspace.externalRootURL.appendingPathComponent("Mole.app")
+        try createAppBundle(at: externalAppURL)
+
+        let service = AppMigrationService()
+        try service.linkApp(
+            appToLink: AppItem(name: "Mole.app", path: externalAppURL, status: AppStatus.unlinked),
+            destinationURL: localAppURL
+        )
+        try assertStubPortal(localAppURL, pointsTo: externalAppURL)
+
+        let localRecord = AppItem(name: "Mole.app", path: localAppURL, status: AppStatus.linked)
+        let externalRecord = AppItem(name: "Mole.app", path: externalAppURL, status: AppStatus.linked)
+
+        let resolved = try XCTUnwrap(service.externalCounterpart(of: localRecord, in: [externalRecord]))
+        XCTAssertEqual(resolved.path.standardizedFileURL, externalAppURL.standardizedFileURL)
+    }
+
+    func testExternalCounterpartIgnoresRecordsThatAreNotLocalPortals() throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let localRealURL = workspace.localAppsURL.appendingPathComponent("Real.app")
+        let externalAppURL = workspace.externalRootURL.appendingPathComponent("Mole.app")
+        try createAppBundle(at: externalAppURL)
+
+        let service = AppMigrationService()
+        let externalRecord = AppItem(name: "Mole.app", path: externalAppURL, status: AppStatus.linked)
+
+        // 已经是外部本体：不该被改写
+        XCTAssertNil(service.externalCounterpart(of: externalRecord, in: [externalRecord]))
+
+        // 本地实体（非入口）：不该被解析到外部
+        try createAppBundle(at: localRealURL)
+        let localRealRecord = AppItem(name: "Real.app", path: localRealURL, status: AppStatus.local)
+        XCTAssertNil(service.externalCounterpart(of: localRealRecord, in: [externalRecord]))
+
+        // 确实是入口，但外部列表里没有对应本体（例如还没扫到）：不猜
+        let localLinkURL = workspace.localAppsURL.appendingPathComponent("Link.app")
+        try fileManager.createSymbolicLink(at: localLinkURL, withDestinationURL: externalAppURL)
+        let linkedRecord = AppItem(name: "Link.app", path: localLinkURL, status: AppStatus.linked)
+        XCTAssertNil(service.externalCounterpart(of: linkedRecord, in: []))
+
+        // 文件夹镜像走 folder operation，不在这里处理
+        let folderRecord = AppItem(name: "Office", path: localLinkURL, status: AppStatus.linked, isFolder: true)
+        XCTAssertNil(service.externalCounterpart(of: folderRecord, in: [externalRecord]))
+    }
+
+    /// 回归：拿到本地入口记录时，还原目标会被算成入口自己，moveBack 于是报
+    /// 「本地已存在同名真实文件，无法覆盖」。换成外部本体记录后必须能正常还原。
+    func testMoveBackAfterResolvingLocalPortalRecordSucceeds() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let localAppURL = workspace.localAppsURL.appendingPathComponent("Mole.app")
+        let externalAppURL = workspace.externalRootURL.appendingPathComponent("Mole.app")
+        try createAppBundle(at: externalAppURL)
+
+        let service = AppMigrationService()
+        try service.linkApp(
+            appToLink: AppItem(name: "Mole.app", path: externalAppURL, status: AppStatus.unlinked),
+            destinationURL: localAppURL
+        )
+        try assertStubPortal(localAppURL, pointsTo: externalAppURL)
+        let localRecord = AppItem(name: "Mole.app", path: localAppURL, status: AppStatus.linked)
+        let externalRecord = AppItem(name: "Mole.app", path: externalAppURL, status: AppStatus.linked)
+
+        // 记录根因：传本地入口记录时，还原目标 == 入口自己
+        XCTAssertEqual(
+            service.localDestinationForRestore(of: localRecord, defaultDirectory: workspace.localAppsURL).standardizedFileURL,
+            localAppURL.standardizedFileURL
+        )
+
+        // 修复后的路径：先解析成外部本体，再还原
+        let resolved = try XCTUnwrap(service.externalCounterpart(of: localRecord, in: [externalRecord]))
+        let destination = service.localDestinationForRestore(of: resolved, defaultDirectory: workspace.localAppsURL)
+        XCTAssertEqual(destination.standardizedFileURL, localAppURL.standardizedFileURL)
+
+        try await service.moveBack(app: resolved, localDestinationURL: destination, progressHandler: nil)
+        try assertRealAppBundle(localAppURL)
+        XCTAssertFalse(fileManager.fileExists(atPath: externalAppURL.path))
+    }
+
     private func makeWorkspace() throws -> (rootURL: URL, localAppsURL: URL, externalRootURL: URL) {
         let rootURL = fileManager.temporaryDirectory.appendingPathComponent("AppPortsTests-\(UUID().uuidString)")
         let localAppsURL = rootURL.appendingPathComponent("Applications")

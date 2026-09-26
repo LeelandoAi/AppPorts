@@ -33,6 +33,20 @@ import Foundation
 actor AppScanner {
     private var infoPlistCache: [URL: [String: Any]] = [:]
 
+    /// 签名备份目录。默认与 AppPorts 应用数据同级；测试可注入临时目录。
+    private let backupDirectoryURL: URL
+
+    /// ad-hoc 签名探测。返回 `nil` 表示**没查出来**（codesign 超时/启动失败），测试可注入。
+    private let adHocProbe: @Sendable (URL) -> Bool?
+
+    init(
+        backupDirectoryURL: URL? = nil,
+        adHocProbe: @escaping @Sendable (URL) -> Bool? = { AppScanner.probeAdHocSignature(at: $0) }
+    ) {
+        self.backupDirectoryURL = backupDirectoryURL ?? Self.defaultBackupDirectoryURL
+        self.adHocProbe = adHocProbe
+    }
+
     private func readInfoPlist(for appURL: URL) -> [String: Any]? {
         if let cached = infoPlistCache[appURL] {
             return cached.isEmpty ? nil : cached
@@ -210,7 +224,7 @@ actor AppScanner {
                 
                 // 检测是否为 App Store 应用和 iOS 应用
                 let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: itemURL)
-                let isResigned = checkResignedStatus(bundleURL: itemURL)
+                let signing = checkSigningStatus(bundleURL: itemURL)
                 let (isElectron, isSparkle) = detectElectronAndSparkle(at: itemURL)
                 let hasUpdater = isSparkle || (isElectron && hasElectronUpdater(at: itemURL)) || hasCustomUpdater(at: itemURL)
                 let needsLock = isSparkle || (isElectron && hasElectronUpdater(at: itemURL))
@@ -223,7 +237,8 @@ actor AppScanner {
                     isRunning: isRunning,
                     isAppStoreApp: isAppStore,
                     isIOSApp: isIOS,
-                    isResigned: isResigned,
+                    isResigned: signing.isResigned,
+                    signatureReplaced: signing.signatureReplaced,
                     isElectronApp: isElectron,
                     isSparkleApp: isSparkle,
                     hasSelfUpdater: hasUpdater,
@@ -255,7 +270,7 @@ actor AppScanner {
                             externalComparisonIndex: externalComparisonIndex
                         )
                         let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: bundleURL)
-                        let isResigned = checkResignedStatus(bundleURL: bundleURL)
+                        let signing = checkSigningStatus(bundleURL: bundleURL)
                         let version = readBundleVersion(from: bundleURL)
                         let app = AppItem(
                             name: folderName,
@@ -266,7 +281,8 @@ actor AppScanner {
                             isRunning: hasRunning,
                             isAppStoreApp: isAppStore,
                             isIOSApp: isIOS,
-                            isResigned: isResigned,
+                            isResigned: signing.isResigned,
+                            signatureReplaced: signing.signatureReplaced,
                             version: version,
                             containerKind: .singleAppContainer,
                             appCount: 1
@@ -910,7 +926,7 @@ actor AppScanner {
                    isLocalApp(localAppURL, linkedTo: itemURL) {
                     status = AppStatus.linked
                 }
-                let isResigned = checkResignedStatus(bundleURL: itemURL)
+                let signing = checkSigningStatus(bundleURL: itemURL)
                 let (isElectron, isSparkle) = detectElectronAndSparkle(at: itemURL)
                 let hasUpdater = isSparkle || (isElectron && hasElectronUpdater(at: itemURL)) || hasCustomUpdater(at: itemURL)
                 let needsLock = isSparkle || (isElectron && hasElectronUpdater(at: itemURL))
@@ -921,7 +937,8 @@ actor AppScanner {
                     status: status,
                     isSystemApp: false,
                     isRunning: false,
-                    isResigned: isResigned,
+                    isResigned: signing.isResigned,
+                    signatureReplaced: signing.signatureReplaced,
                     isElectronApp: isElectron,
                     isSparkleApp: isSparkle,
                     hasSelfUpdater: hasUpdater,
@@ -953,7 +970,7 @@ actor AppScanner {
                         }
 
                         let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: bundleURL)
-                        let isResigned = checkResignedStatus(bundleURL: bundleURL)
+                        let signing = checkSigningStatus(bundleURL: bundleURL)
                         let app = AppItem(
                             name: folderName,
                             path: itemURL,
@@ -963,7 +980,8 @@ actor AppScanner {
                             isRunning: false,
                             isAppStoreApp: isAppStore,
                             isIOSApp: isIOS,
-                            isResigned: isResigned,
+                            isResigned: signing.isResigned,
+                            signatureReplaced: signing.signatureReplaced,
                             containerKind: .singleAppContainer,
                             appCount: 1
                         )
@@ -1013,7 +1031,7 @@ actor AppScanner {
                 }
 
                 let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: externalTargetURL)
-                let isResigned = checkResignedStatus(bundleURL: externalTargetURL)
+                let signing = checkSigningStatus(bundleURL: externalTargetURL)
                 let app = AppItem(
                     name: externalTargetURL.lastPathComponent,
                     path: externalTargetURL,
@@ -1023,7 +1041,8 @@ actor AppScanner {
                     isRunning: false,
                     isAppStoreApp: isAppStore,
                     isIOSApp: isIOS,
-                    isResigned: isResigned,
+                    isResigned: signing.isResigned,
+                    signatureReplaced: signing.signatureReplaced,
                     containerKind: .standaloneApp
                 )
                 candidates.append(makeCandidate(for: app, bundleURL: externalTargetURL, priority: 40))
@@ -1042,7 +1061,7 @@ actor AppScanner {
 
             if appsInFolder.count == 1, let bundleURL = appsInFolder.first {
                 let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: bundleURL)
-                let isResigned = checkResignedStatus(bundleURL: bundleURL)
+                let signing = checkSigningStatus(bundleURL: bundleURL)
                 let app = AppItem(
                     name: externalTargetURL.lastPathComponent,
                     path: externalTargetURL,
@@ -1052,7 +1071,8 @@ actor AppScanner {
                     isRunning: false,
                     isAppStoreApp: isAppStore,
                     isIOSApp: isIOS,
-                    isResigned: isResigned,
+                    isResigned: signing.isResigned,
+                    signatureReplaced: signing.signatureReplaced,
                     containerKind: .singleAppContainer,
                     appCount: 1
                 )
@@ -1085,7 +1105,7 @@ actor AppScanner {
                     status = AppStatus.linked
                 }
                 let (isAppStore, isIOS) = detectAppStoreAndIOSApp(at: itemURL)
-                let isResigned = checkResignedStatus(bundleURL: itemURL)
+                let signing = checkSigningStatus(bundleURL: itemURL)
                 let app = AppItem(
                     name: appName,
                     path: itemURL,
@@ -1096,7 +1116,8 @@ actor AppScanner {
                     isAppStoreApp: isAppStore,
                     isMASExternal: true,
                     isIOSApp: isIOS,
-                    isResigned: isResigned,
+                    isResigned: signing.isResigned,
+                    signatureReplaced: signing.signatureReplaced,
                     containerKind: .standaloneApp
                 )
                 candidates.append(makeCandidate(for: app, bundleURL: itemURL, priority: 15))
@@ -1213,33 +1234,105 @@ actor AppScanner {
         readInfoPlist(for: appURL)?["CFBundleShortVersionString"] as? String
     }
 
-    private static var backupDirectoryURL: URL {
+    private static var defaultBackupDirectoryURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport.appendingPathComponent("AppPorts/signature-backups")
     }
 
+    struct SigningStatus {
+        static let clean = SigningStatus(isResigned: false, signatureReplaced: false)
+        let isResigned: Bool
+        let signatureReplaced: Bool
+    }
+
     private func checkResignedStatus(bundleURL: URL?) -> Bool {
-        guard let bundleURL else { return false }
+        checkSigningStatus(bundleURL: bundleURL).isResigned
+    }
+
+    /// 结合签名备份与当前签名判断：是否被 AppPorts 重签过、原始开发者签名是否已被替换。
+    /// 只观察当前状态，恢复材料由显式的恢复事务清理。
+    private func checkSigningStatus(bundleURL: URL?) -> SigningStatus {
+        guard let bundleURL else { return .clean }
 
         // 先用本地 bundle ID 检查
-        if let bundleID = readBundleIdentifier(from: bundleURL) {
-            let backupPlist = Self.backupDirectoryURL.appendingPathComponent("\(bundleID).plist")
-            if FileManager.default.fileExists(atPath: backupPlist.path) {
-                return isAdHocSigned(at: bundleURL)
-            }
+        if let bundleID = readBundleIdentifier(from: bundleURL),
+           let status = signingStatus(realAppURL: bundleURL, bundleID: bundleID) {
+            return status
         }
 
         // 已链接应用：备份保存在真实应用的 bundle ID 下，需要解析外部路径
         if let externalURL = resolveExternalRealApp(from: bundleURL),
-           let realBundleID = readBundleIdentifier(from: externalURL) {
-            let backupPlist = Self.backupDirectoryURL.appendingPathComponent("\(realBundleID).plist")
-            if FileManager.default.fileExists(atPath: backupPlist.path) {
-                // 检查外部真实应用是否为 ad-hoc 签名
-                return isAdHocSigned(at: externalURL)
-            }
+           let realBundleID = readBundleIdentifier(from: externalURL),
+           let status = signingStatus(realAppURL: externalURL, bundleID: realBundleID) {
+            return status
         }
 
-        return false
+        return .clean
+    }
+
+    private func signingStatus(realAppURL: URL, bundleID: String) -> SigningStatus? {
+        guard let originalIdentity = CodeSigner.originalSigningIdentity(bundleIdentifier: bundleID, backupDirectoryURL: backupDirectoryURL) else {
+            return nil
+        }
+        let probeResult = isAdHocSigned(at: realAppURL)
+        // 预备份后、重签前仍可能是开发者签名；扫描不得删除恢复材料。
+        // 查不出当前签名时保留原来的提示，等待下次查询。
+        let currentlyAdHoc = probeResult ?? true
+        return SigningStatus(
+            isResigned: currentlyAdHoc,
+            signatureReplaced: CodeSigner.isSignatureReplaced(originalIdentity: originalIdentity, currentlyAdHoc: currentlyAdHoc)
+        )
+    }
+
+    /// 「签名已被替换」的轻量检查：只回答「AppPorts 签过名、现在签名仍是 ad-hoc、原始签名不是」的应用是哪些。
+    ///
+    /// 与 `scanLocalApps` 的区别是不计算体积、不探测 Sparkle/Electron，因此可以在主界面出现后立刻返回，
+    /// 不必等首次完整扫描（实测可达十几分钟）跑完。名单口径与完整扫描一致：
+    /// 必须存在签名备份；应用已卸载则不出现在结果里。
+    func signatureReplacedApps(searchRoots: [URL]) -> [SignatureReplacedApp] {
+        guard CodeSigner.hasSignatureBackups(backupDirectoryURL: backupDirectoryURL) else { return [] }
+        let started = Date()
+        var results: [SignatureReplacedApp] = []
+        var seen = Set<String>()
+        for root in searchRoots {
+            for candidate in signatureCheckCandidates(in: root) {
+                guard checkSigningStatus(bundleURL: candidate.bundleURL).signatureReplaced else { continue }
+                guard seen.insert(candidate.bundleURL.standardizedFileURL.path).inserted else { continue }
+                results.append(SignatureReplacedApp(
+                    name: candidate.name,
+                    bundleURL: candidate.bundleURL,
+                    path: candidate.localURL
+                ))
+            }
+        }
+        AppLogger.shared.logContext(
+            "签名备份快检完成",
+            details: [
+                ("roots", searchRoots.map(\.path).joined(separator: ", ")),
+                ("count", String(results.count)),
+                ("elapsed_ms", String(Int(Date().timeIntervalSince(started) * 1000)))
+            ]
+        )
+        return results
+    }
+
+    /// 枚举本地应用目录下的应用包，口径与 `scanLocalApps` 的候选枚举一致：
+    /// 顶层 `.app`，以及只含一个 `.app` 的文件夹（迁移后的文件夹容器）。
+    private func signatureCheckCandidates(in root: URL) -> [(localURL: URL, bundleURL: URL, name: String)] {
+        let keys: [URLResourceKey] = [.isSymbolicLinkKey, .isDirectoryKey]
+        let items = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: keys, options: .skipsHiddenFiles)) ?? []
+        var candidates: [(localURL: URL, bundleURL: URL, name: String)] = []
+        for itemURL in items {
+            if itemURL.pathExtension == "app" {
+                candidates.append((localURL: itemURL, bundleURL: itemURL, name: itemURL.lastPathComponent))
+                continue
+            }
+            let innerBundles = appBundlesInsideFolderPortal(at: itemURL)
+            if innerBundles.count == 1, let bundleURL = innerBundles.first {
+                candidates.append((localURL: itemURL, bundleURL: bundleURL, name: bundleURL.lastPathComponent))
+            }
+        }
+        return candidates
     }
 
     /// 解析已链接应用的外部真实路径（支持 whole-app symlink 和 stub portal）
@@ -1278,8 +1371,20 @@ actor AppScanner {
         return nil
     }
 
-    /// 检查 app 是否为 ad-hoc 签名（非 Developer ID）
-    private func isAdHocSigned(at appURL: URL) -> Bool {
+    private func isAdHocSigned(at appURL: URL) -> Bool? {
+        adHocProbe(appURL)
+    }
+
+    /// 检查 app 是否为 ad-hoc 签名（非 Developer ID）。
+    ///
+    /// 三种结果：
+    /// - `true`：codesign 正常退出且报告 `Signature=adhoc`
+    /// - `false`：codesign 正常退出且报告的签名不是 ad-hoc（例如用户重装后恢复了开发者签名）
+    /// - `nil`：**没查出来** —— 启动失败、超时、或 codesign 非零退出。
+    ///
+    /// `nil` 不能当成 `false`：外置盘繁忙时一条 10 秒超时曾经被当成「签名已恢复」，
+    /// 于是 AppPorts 删掉了用户的签名备份，修复入口和「恢复原始签名」一起消失。
+    private static func probeAdHocSignature(at appURL: URL) -> Bool? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
         process.arguments = ["-dvv", appURL.path]
@@ -1296,7 +1401,7 @@ actor AppScanner {
                 errorCode: "CODESIGN-LAUNCH-FAILED",
                 relatedURLs: [("app", appURL)]
             )
-            return false
+            return nil
         }
 
         let timeoutSeconds: TimeInterval = 10
@@ -1312,11 +1417,19 @@ actor AppScanner {
                 ],
                 level: "WARN"
             )
-            return false
+            return nil
         }
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            AppLogger.shared.logContext(
+                "isAdHocSigned: codesign 非零退出，按「没查出来」处理",
+                details: [("app", appURL.path), ("status", String(process.terminationStatus))],
+                level: "WARN"
+            )
+            return nil
+        }
         return output.contains("Signature=adhoc")
     }
 }

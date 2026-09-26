@@ -119,6 +119,10 @@ struct AppItem: Identifiable, Equatable, Sendable {
     /// - Note: 通过检测签名备份 plist 是否存在来判断
     var isResigned: Bool = false
 
+    /// 原始开发者签名已被 Ad-hoc 签名替换：备份记录的原始身份是开发者证书，当前签名却是 ad-hoc。
+    /// 这类应用在 macOS 27 上可能无法打开，修复路径是还原数据、重装后再挂载迁移。
+    var signatureReplaced: Bool = false
+
     /// 是否为 Electron 应用（含 Electron Framework）
     var isElectronApp: Bool = false
 
@@ -270,5 +274,29 @@ enum AppMoverError: LocalizedError {
             2. 然后回到 AppPorts 创建链接
             """.localized
         }
+    }
+}
+
+// MARK: - 签名已被替换（启动提醒）
+
+/// 「签名已被替换」提醒使用的轻量条目，只带提醒需要的展示信息。
+///
+/// 该提醒不依赖完整应用扫描（体积计算、Sparkle 探测等），启动时单独查一次即可，
+/// 所以不能复用 `AppItem`——那需要等首次扫描跑完。
+struct SignatureReplacedApp: Identifiable, Equatable, Sendable {
+    let name: String
+    let bundleURL: URL?
+    let path: URL
+
+    /// 与完整扫描结果一致的稳定标识，用于记住「以后再说」。
+    var dismissalKey: String { (bundleURL ?? path).standardizedFileURL.path }
+    var displayName: String { bundleURL?.lastPathComponent ?? name }
+    var id: String { dismissalKey }
+}
+
+extension AppItem {
+    /// 完整扫描结果转成提醒条目，两种来源共用同一份提醒逻辑。
+    var signatureRepairEntry: SignatureReplacedApp {
+        SignatureReplacedApp(name: name, bundleURL: bundleURL, path: path)
     }
 }

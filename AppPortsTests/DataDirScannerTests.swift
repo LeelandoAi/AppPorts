@@ -383,6 +383,136 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertNil(items.first(where: { $0.path.standardizedFileURL == localGroupContainerURL.standardizedFileURL }))
     }
 
+    // MARK: - Bundle ID 后缀匹配
+
+    func testGenericBundleIDSuffixDoesNotMatchOtherAppsContainers() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let appURL = try createAppBundle(named: "Termius.app", bundleID: "com.termius-dmg.mac", in: workspace.appsURL)
+        let ownContainerURL = workspace.homeURL
+            .appendingPathComponent("Library/Containers/com.termius-dmg.mac/Data/Documents/Payload")
+        let foreignContainerURL = workspace.homeURL
+            .appendingPathComponent("Library/Containers/com.tencent.QQMusicMac/Data/Documents/Payload")
+        try createDirectoryWithPayload(at: ownContainerURL)
+        try createDirectoryWithPayload(at: foreignContainerURL)
+
+        let items = await DataDirScanner(
+            homeDir: workspace.homeURL,
+            mountStore: ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("mounts.plist")),
+            isSandboxedApplication: { _ in false }
+        ).scanLibraryDirs(for: AppItem(name: "Termius.app", path: appURL, status: "本地"))
+
+        XCTAssertNotNil(items.first(where: { $0.path.standardizedFileURL == ownContainerURL.standardizedFileURL }))
+        XCTAssertNil(items.first(where: { $0.path.path.contains("QQMusicMac") }), "通用后缀 mac 不应匹配到其他应用的容器")
+    }
+
+    // MARK: - 沙盒应用与挂载迁移
+
+    func testSandboxedAppContainerDataRequiresMountMigration() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let appURL = try createAppBundle(named: "Focus.app", bundleID: "com.example.focus", in: workspace.appsURL)
+        let containerDataURL = workspace.homeURL
+            .appendingPathComponent("Library/Containers/com.example.focus/Data/Documents/Payload")
+        let appSupportURL = workspace.homeURL
+            .appendingPathComponent("Library/Application Support/com.example.focus")
+        try createDirectoryWithPayload(at: containerDataURL)
+        try createDirectoryWithPayload(at: appSupportURL)
+
+        let scanner = DataDirScanner(
+            homeDir: workspace.homeURL,
+            mountStore: ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("mounts.plist")),
+            isSandboxedApplication: { _ in true }
+        )
+        let app = AppItem(name: "Focus.app", path: appURL, status: "本地")
+        let requiresMount = await scanner.isSandboxed(app)
+        let items = await scanner.scanLibraryDirs(for: app, externalRootURL: workspace.externalRootURL)
+
+        XCTAssertTrue(requiresMount)
+        let containerItem = try XCTUnwrap(items.first(where: { $0.path.standardizedFileURL == containerDataURL.standardizedFileURL }))
+        XCTAssertTrue(containerItem.requiresMountMigration)
+        XCTAssertTrue(containerItem.isMigratable)
+        XCTAssertNil(containerItem.migrationWarning, "沙盒应用不再走符号链接迁移，符号链接风险提示不适用")
+        XCTAssertEqual(containerItem.status, "本地")
+
+        let appSupportItem = try XCTUnwrap(items.first(where: { $0.path.standardizedFileURL == appSupportURL.standardizedFileURL }))
+        XCTAssertFalse(appSupportItem.requiresMountMigration, "容器外的目录仍然使用符号链接迁移")
+    }
+
+    func testNonSandboxedAppContainerDataStillRequiresMountMigration() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let appURL = try createAppBundle(named: "Focus.app", bundleID: "com.example.focus", in: workspace.appsURL)
+        let containerDataURL = workspace.homeURL
+            .appendingPathComponent("Library/Containers/com.example.focus/Data/Documents/Payload")
+        try createDirectoryWithPayload(at: containerDataURL)
+
+        let scanner = DataDirScanner(
+            homeDir: workspace.homeURL,
+            mountStore: ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("mounts.plist")),
+            isSandboxedApplication: { _ in false }
+        )
+        let items = await scanner.scanLibraryDirs(
+            for: AppItem(name: "Focus.app", path: appURL, status: "本地"),
+            externalRootURL: workspace.externalRootURL
+        )
+
+        // 容器的主人可能是沙盒的小组件/扩展，主应用不沙盒也不能用符号链接。
+        let containerItem = try XCTUnwrap(items.first(where: { $0.path.standardizedFileURL == containerDataURL.standardizedFileURL }))
+        XCTAssertTrue(containerItem.requiresMountMigration)
+        XCTAssertNil(containerItem.migrationWarning)
+    }
+
+    func testMountRecordsAreReportedByMountAndVolumeState() async throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let appURL = try createAppBundle(named: "Focus.app", bundleID: "com.example.focus", in: workspace.appsURL)
+        let documentsURL = workspace.homeURL
+            .appendingPathComponent("Library/Containers/com.example.focus/Data/Documents")
+        let mountedURL = documentsURL.appendingPathComponent("Mounted")
+        let pendingURL = documentsURL.appendingPathComponent("Pending")
+        let missingURL = documentsURL.appendingPathComponent("Missing")
+        for url in [mountedURL, pendingURL, missingURL] {
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+
+        let store = ContainerMountStore(fileURL: workspace.rootURL.appendingPathComponent("mounts.plist"))
+        for (url, uuid) in [(mountedURL, "MOUNTED"), (pendingURL, "PENDING"), (missingURL, "MISSING")] {
+            try store.upsert(ContainerMountRecord(
+                appName: "Focus", bundleIdentifier: "com.example.focus", dataDirType: DataDirType.containers.rawValue,
+                mountPointPath: url.standardizedFileURL.path, volumeUUID: uuid, volumeName: "AppPorts-\(uuid)",
+                externalRootPath: workspace.externalRootURL.path
+            ))
+        }
+
+        let mountedPath = mountedURL.resolvingSymlinksInPath().path
+        let scanner = DataDirScanner(
+            homeDir: workspace.homeURL,
+            mountStore: store,
+            isMountPoint: { $0.resolvingSymlinksInPath().path == mountedPath },
+            isVolumeOnline: { $0 == "PENDING" },
+            isSandboxedApplication: { _ in true }
+        )
+        let items = await scanner.scanLibraryDirs(
+            for: AppItem(name: "Focus.app", path: appURL, status: "本地"),
+            externalRootURL: workspace.externalRootURL
+        )
+        let statuses = Dictionary(uniqueKeysWithValues: items.map { ($0.path.lastPathComponent, $0.status) })
+
+        XCTAssertEqual(statuses["Mounted"], "已挂载")
+        XCTAssertEqual(statuses["Pending"], "待挂载")
+        XCTAssertEqual(statuses["Missing"], "卷丢失")
+        for name in ["Mounted", "Pending", "Missing"] {
+            let item = try XCTUnwrap(items.first(where: { $0.path.lastPathComponent == name }))
+            XCTAssertTrue(item.requiresMountMigration)
+            XCTAssertNil(item.linkedDestination)
+        }
+    }
+
     func testManagedGroupContainerRootLinkIsReportedButNotMigratable() async throws {
         let workspace = try makeWorkspace()
         defer { cleanupWorkspace(workspace.rootURL) }
@@ -415,6 +545,75 @@ final class DataDirScannerTests: XCTestCase {
         XCTAssertEqual(item.linkedDestination?.standardizedFileURL, externalGroupContainerURL.standardizedFileURL)
         XCTAssertFalse(item.isMigratable)
         XCTAssertNotNil(item.nonMigratableReason)
+    }
+
+    // MARK: - 目录大小缓存
+
+    /// 未挂载的挂载点就是一个空目录，算出来是 0。这个 0 一旦被缓存，
+    /// 卷挂好之后列表仍会一直显示「0 字节」，所以 0 不能进缓存。
+    func testEmptyDirectorySizeIsNotCachedAsZero() throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let mountPointURL = workspace.homeURL.appendingPathComponent("UnmountedMountPoint")
+        try fileManager.createDirectory(at: mountPointURL, withIntermediateDirectories: true)
+        XCTAssertEqual(fastDirectorySize(at: mountPointURL), 0)
+
+        // 卷挂上了：同一个路径必须重新算出真实大小，而不是命中缓存的 0。
+        try "payload".write(
+            to: mountPointURL.appendingPathComponent("payload.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertEqual(fastDirectorySize(at: mountPointURL), Int64("payload".utf8.count))
+    }
+
+    /// 卷被别的进程卸掉或挂回来时，缓存要跟着挂载状态走，不能沿用上一状态的大小。
+    func testSizeCacheFollowsMountState() throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let directoryURL = workspace.homeURL.appendingPathComponent("MountedDirectory")
+        try createDirectoryWithPayload(at: directoryURL)
+        let payloadSize = Int64("payload".utf8.count)
+
+        var mounted = true
+        let mountState: (URL) -> Bool = { _ in mounted }
+
+        XCTAssertEqual(fastDirectorySize(at: directoryURL, isMountPoint: mountState), payloadSize)
+
+        // 卷被外部卸载：同一路径现在是空目录，缓存里那份"已挂载"的大小不能继续沿用。
+        try fileManager.removeItem(at: directoryURL.appendingPathComponent("payload.txt"))
+        mounted = false
+        XCTAssertEqual(fastDirectorySize(at: directoryURL, isMountPoint: mountState), 0)
+
+        // 卷挂回来：重新算出真实大小，而不是命中卸载期间算出的 0。
+        try "payload".write(
+            to: directoryURL.appendingPathComponent("payload.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        mounted = true
+        XCTAssertEqual(fastDirectorySize(at: directoryURL, isMountPoint: mountState), payloadSize)
+    }
+
+    /// 非 0 结果仍然缓存，避免每次扫描都重新遍历大目录。
+    func testNonZeroDirectorySizeIsCached() throws {
+        let workspace = try makeWorkspace()
+        defer { cleanupWorkspace(workspace.rootURL) }
+
+        let directoryURL = workspace.homeURL.appendingPathComponent("CachedDirectory")
+        try createDirectoryWithPayload(at: directoryURL)
+        let firstSize = fastDirectorySize(at: directoryURL)
+        XCTAssertGreaterThan(firstSize, 0)
+
+        // 文件被删掉后仍然命中缓存（这正是缓存存在的意义）。
+        try fileManager.removeItem(at: directoryURL.appendingPathComponent("payload.txt"))
+        XCTAssertEqual(fastDirectorySize(at: directoryURL), firstSize)
+
+        // 缓存失效后回到真实大小。
+        invalidateSizeCache(for: directoryURL)
+        XCTAssertEqual(fastDirectorySize(at: directoryURL), 0)
     }
 
     private func makeWorkspace() throws -> (rootURL: URL, homeURL: URL, appsURL: URL, externalRootURL: URL) {

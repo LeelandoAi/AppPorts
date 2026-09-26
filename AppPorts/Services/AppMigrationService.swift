@@ -830,6 +830,25 @@ struct AppMigrationService {
     }
 
     /// 恢复到已有入口所在的扫描目录；旧版展开入口仍恢复整个应用容器。
+    /// 还原必须作用在外部本体上。
+    ///
+    /// 已链接 / 部分链接的应用，本地那一条记录只是一个入口（stub / 符号链接），它的 `path`
+    /// 指向本地入口而不是本体。直接拿它去还原会变成「把入口还原到入口自己身上」，
+    /// 入口检查认不出这个入口，于是报「本地已存在同名真实文件，无法覆盖」。
+    /// 这里按入口实际指向的真实路径，在外部应用列表里找出对应的本体记录。
+    /// - Returns: 对应的外部本体记录；传入的本来就是外部本体、本地实体，或解析不出来时返回 nil。
+    func externalCounterpart(of app: AppItem, in externalApps: [AppItem]) -> AppItem? {
+        guard !app.usesFolderOperation,
+              app.status == AppStatus.linked || app.status == AppStatus.partialLinked,
+              let realURL = try? CodeSigner.resolveAppURL(at: app.path) else { return nil }
+        let standardized = realURL.standardizedFileURL
+        guard standardized.path != app.path.standardizedFileURL.path else { return nil }
+        return externalApps.first { candidate in
+            candidate.path.standardizedFileURL == standardized
+                || candidate.bundleURL?.standardizedFileURL == standardized
+        }
+    }
+
     func localDestinationForRestore(
         of app: AppItem,
         defaultDirectory: URL,

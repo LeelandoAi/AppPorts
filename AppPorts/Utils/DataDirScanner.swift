@@ -74,9 +74,16 @@ private let directorySizeCache: NSCache<NSString, NSNumber> = {
     return c
 }()
 
-/// 清除指定路径的大小缓存
+/// 缓存键带上当前挂载状态。挂载点被挂上或卸下时目录内容会整体替换，
+/// 状态一变就等于缓存失效，不会把卸载前那份旧大小继续报给界面。
+private func sizeCacheKey(for url: URL, isMountPoint: Bool) -> NSString {
+    "\(url.standardizedFileURL.path)|\(isMountPoint ? "mount" : "plain")" as NSString
+}
+
+/// 清除指定路径的大小缓存（两种挂载状态一起清）
 func invalidateSizeCache(for url: URL) {
-    directorySizeCache.removeObject(forKey: url.standardizedFileURL.path as NSString)
+    directorySizeCache.removeObject(forKey: sizeCacheKey(for: url, isMountPoint: true))
+    directorySizeCache.removeObject(forKey: sizeCacheKey(for: url, isMountPoint: false))
 }
 
 /// 清除全部大小缓存
@@ -88,8 +95,12 @@ func clearSizeCache() {
 ///
 /// 优先级：内存缓存 → FileManager.enumerator
 /// 注意：不对目录使用 Spotlight（kMDItemFSSize 对目录不可靠，PearCleaner 也跳过了）
-func fastDirectorySize(at url: URL, fileManager: FileManager = .default) -> Int64 {
-    let cacheKey = url.standardizedFileURL.path as NSString
+func fastDirectorySize(
+    at url: URL,
+    fileManager: FileManager = .default,
+    isMountPoint: (URL) -> Bool = { DiskUtility.isMountPoint($0) }
+) -> Int64 {
+    let cacheKey = sizeCacheKey(for: url, isMountPoint: isMountPoint(url))
     if let cached = directorySizeCache.object(forKey: cacheKey) {
         return cached.int64Value
     }
@@ -122,7 +133,11 @@ func fastDirectorySize(at url: URL, fileManager: FileManager = .default) -> Int6
               let fileSize = attrs.fileSize else { continue }
         total += Int64(fileSize)
     }
-    directorySizeCache.setObject(NSNumber(value: total), forKey: cacheKey)
+    // 0 不写缓存：未挂载的挂载点就是一个空目录，算出来同样是 0；缓存下来会让卷挂好之后
+    // 一直显示「0 字节」。空目录重新遍历的代价可以忽略，所以每次重算更安全。
+    if total > 0 {
+        directorySizeCache.setObject(NSNumber(value: total), forKey: cacheKey)
+    }
     return total
 }
 
@@ -136,6 +151,12 @@ actor DataDirScanner {
     private let managedLinkMetadataSidecarSuffix = ".appports-link-metadata.plist"
     private let managedLinkIdentifier = "com.shimoko.AppPorts"
     private let managedLinkSchemaVersion = 1
+    private let mountStore: ContainerMountStore
+    private let isMountPoint: @Sendable (URL) -> Bool
+    private let isVolumeOnline: @Sendable (String) -> Bool
+    private let isSandboxedApplication: @Sendable (URL) -> Bool
+    /// 本轮扫描开始时读取一次的挂载记录，避免逐路径重复读文件。
+    private var mountRecordsByPath: [String: ContainerMountRecord] = [:]
 
     private struct ManagedLinkMetadata: Codable, Sendable {
         let schemaVersion: Int
@@ -145,8 +166,32 @@ actor DataDirScanner {
         let dataDirType: String
     }
 
-    init(homeDir: URL = URL(fileURLWithPath: NSHomeDirectory())) {
+    init(
+        homeDir: URL = URL(fileURLWithPath: NSHomeDirectory()),
+        mountStore: ContainerMountStore = .shared,
+        isMountPoint: @escaping @Sendable (URL) -> Bool = { DiskUtility.isMountPoint($0) },
+        isVolumeOnline: @escaping @Sendable (String) -> Bool = { DiskUtility.isVolumeOnline($0) },
+        isSandboxedApplication: @escaping @Sendable (URL) -> Bool = { DataDirScanner.isSandboxedRealApplication($0) }
+    ) {
         self.homeDir = homeDir.standardizedFileURL
+        self.mountStore = mountStore
+        self.isMountPoint = isMountPoint
+        self.isVolumeOnline = isVolumeOnline
+        self.isSandboxedApplication = isSandboxedApplication
+    }
+
+    /// 解析入口到真实应用后读取 entitlements；找不到真实应用时按非沙盒处理，
+    /// 后续的重签名与挂载入口会各自再做校验。
+    static func isSandboxedRealApplication(_ appURL: URL) -> Bool {
+        guard let realURL = try? CodeSigner.resolveAppURL(at: appURL) else { return false }
+        return CodeSigner.isSandboxed(at: realURL)
+    }
+
+    /// 关联应用是否为沙盒应用。沙盒应用迁移数据后不能重签名。
+    /// 容器目录本身是否需要挂载迁移不看这个值：见 `scanLibraryDirs` 中的统一规则。
+    func isSandboxed(_ app: AppItem) -> Bool {
+        guard !app.isFolder else { return false }
+        return isSandboxedApplication(app.displayURL)
     }
 
     // MARK: - 内置已知 dotFolder 列表
@@ -387,6 +432,7 @@ actor DataDirScanner {
             ],
             level: "TRACE"
         )
+        refreshMountRecords()
         var results: [DataDirItem] = []
 
         for known in knownDotFolders {
@@ -447,11 +493,13 @@ actor DataDirScanner {
     func scanLibraryDirs(for app: AppItem, externalRootURL: URL? = nil) -> [DataDirItem] {
         guard !app.isFolder else { return [] }
         let scanID = AppLogger.shared.makeOperationID(prefix: "scanner-library-dirs")
+        refreshMountRecords()
 
         // 从 Info.plist 读取 BundleID
         let bundleID = readBundleID(from: app.path)
         let appName = app.name.replacingOccurrences(of: ".app", with: "")
         let matchProfile = buildMatchProfile(bundleID: bundleID, appName: appName)
+        let appIsSandboxed = isSandboxedApplication(app.displayURL)
         AppLogger.shared.logContext(
             "DataDirScanner 开始扫描应用数据目录",
             details: [
@@ -460,6 +508,7 @@ actor DataDirScanner {
                 ("app_path", app.path.path),
                 ("bundle_id", bundleID),
                 ("external_root", externalRootURL?.path),
+                ("sandboxed", appIsSandboxed ? "true" : "false"),
                 ("exact_match_count", String(matchProfile.exactMatches.count)),
                 ("contains_match_count", String(matchProfile.containsMatches.count)),
                 ("short_prefix_match_count", String(matchProfile.shortPrefixMatches.count))
@@ -503,6 +552,16 @@ actor DataDirScanner {
                         applyInspectionResult(to: &item, inspection: inspection, externalRootURL: externalRootURL)
                         markProtectedGroupContainerRoot(&item)
                         resultsByPath[candidateURL.standardizedFileURL.path] = item
+                    } else if inspection.status == "本地" {
+                        // 根目录不可迁移，但其直接子目录可以逐个迁移（沙盒应用走挂载迁移）。
+                        for childItem in scanGroupContainerChildren(
+                            in: candidateURL,
+                            priority: config.priority,
+                            appName: appName,
+                            externalRootURL: externalRootURL
+                        ) {
+                            resultsByPath[childItem.path.standardizedFileURL.path] = childItem
+                        }
                     }
                 } else {
                     var item = makeAppDataItem(
@@ -555,6 +614,17 @@ actor DataDirScanner {
             resultsByPath[item.path.standardizedFileURL.path] = item
         }
 
+        // Containers / Group Containers 下的目录一律挂载迁移，不看主应用是否沙盒：
+        // 容器存在本身就说明它的主人（主应用、小组件、扩展或 helper）是沙盒进程，
+        // 符号链接会被内核按真实路径拒绝；已被重签过的应用虽然此刻能用，也正是升级后秒退的那类。
+        for (key, item) in resultsByPath
+        where (item.type == .containers || item.type == .groupContainers) && item.isMigratable {
+            var mountItem = item
+            mountItem.requiresMountMigration = true
+            mountItem.migrationWarning = nil
+            resultsByPath[key] = mountItem
+        }
+
         let sortedResults = Array(resultsByPath.values).sorted {
             if $0.priority != $1.priority {
                 return $0.priority < $1.priority
@@ -601,6 +671,64 @@ actor DataDirScanner {
     }
 
     // MARK: - 私有辅助方法
+
+    /// AppPorts 接管的状态：受管符号链接与挂载迁移都算。
+    private func isManagedStatus(_ status: String) -> Bool {
+        status == "已链接" || status == "待规范" || DataDirStatus.mountStatuses.contains(status)
+    }
+
+    private func refreshMountRecords() {
+        var byPath: [String: ContainerMountRecord] = [:]
+        for record in mountStore.records() {
+            // 临时目录等路径可能以 /var 或 /private/var 两种形式出现，两种键都登记。
+            byPath[record.mountPointPath] = record
+            byPath[URL(fileURLWithPath: record.mountPointPath).resolvingSymlinksInPath().path] = record
+        }
+        mountRecordsByPath = byPath
+    }
+
+    private func mountRecord(for url: URL) -> ContainerMountRecord? {
+        mountRecordsByPath[url.standardizedFileURL.path]
+            ?? mountRecordsByPath[url.resolvingSymlinksInPath().path]
+    }
+
+    /// 应用组容器根目录不可迁移；列出其直接子目录作为可迁移项。
+    private func scanGroupContainerChildren(
+        in rootURL: URL,
+        priority: DataDirPriority,
+        appName: String,
+        externalRootURL: URL?
+    ) -> [DataDirItem] {
+        var results: [DataDirItem] = []
+
+        for childURL in directoryEntries(at: rootURL) {
+            let inspection = inspectItem(at: childURL, type: .groupContainers)
+            let resolvedTarget = resolveSymlinkDestination(at: childURL)
+            let shouldSurface = resolvedTarget.map { shouldSurfaceNestedContainerLink(from: childURL, to: $0, externalRootURL: externalRootURL) } ?? false
+            guard inspection.status == "本地" || isManagedStatus(inspection.status) || shouldSurface else { continue }
+
+            var item = DataDirItem(
+                name: "\(DataDirType.groupContainers.localizedTitle): \(rootURL.lastPathComponent)/\(childURL.lastPathComponent)",
+                path: childURL,
+                type: .groupContainers,
+                priority: priority,
+                description: "应用组容器内部数据目录".localized,
+                isMigratable: true
+            )
+            item.associatedAppName = appName
+            if inspection.status == "本地" {
+                item.migrationWarning = "此目录位于沙盒应用容器内，迁移后应用可能无法打开。如遇此情况，请将该目录迁回本地即可恢复。".localized
+            }
+            applyInspectionResult(
+                to: &item,
+                inspection: (inspection.status, inspection.linkedDestination ?? resolvedTarget),
+                externalRootURL: externalRootURL
+            )
+            results.append(item)
+        }
+
+        return deduplicate(items: results)
+    }
 
     private func appDataSearchConfigs() -> [AppDataSearchConfig] {
         let libraryRoot = homeDir.appendingPathComponent("Library")
@@ -697,15 +825,15 @@ actor DataDirScanner {
 
         for childURL in entries {
             let inspection = inspectItem(at: childURL, type: .containers)
-            let relativeSuffix = childURL.path.replacingOccurrences(of: containerURL.path + "/", with: "")
+            let relativeSuffix = containerRelativeSuffix(of: childURL, in: containerURL)
 
             // 已迁移的符号链接（指向外部）
             let resolvedTarget = resolveSymlinkDestination(at: childURL)
             let shouldSurface = resolvedTarget.map { shouldSurfaceNestedContainerLink(from: childURL, to: $0, externalRootURL: externalRootURL) } ?? false
             AppLogger.shared.log("[NestedDebug] \(relativeSuffix) | status=\(inspection.status) | resolved=\(resolvedTarget?.path ?? "nil") | shouldSurface=\(shouldSurface) | extRoot=\(externalRootURL?.path ?? "nil")", level: "DEBUG")
 
-            // AppPorts 受管链接始终显示（不受路径检查限制）
-            if inspection.status == "已链接" || inspection.status == "待规范" {
+            // AppPorts 受管链接与挂载迁移项始终显示（不受路径检查限制）
+            if isManagedStatus(inspection.status) {
                 var item = DataDirItem(
                     name: "容器子目录: \(relativeSuffix)",
                     path: childURL,
@@ -770,7 +898,7 @@ actor DataDirScanner {
                     let libEntries = directoryEntries(at: childURL)
                     for libChild in libEntries {
                         let libInspection = inspectItem(at: libChild, type: .containers)
-                        let libSuffix = libChild.path.replacingOccurrences(of: containerURL.path + "/", with: "")
+                        let libSuffix = containerRelativeSuffix(of: libChild, in: containerURL)
 
                         let libResolved = resolveSymlinkDestination(at: libChild)
                         _ = libResolved.map { shouldSurfaceNestedContainerLink(from: libChild, to: $0, externalRootURL: externalRootURL) }
@@ -778,7 +906,7 @@ actor DataDirScanner {
                         let isProtectedAppSupport = libSuffix == "Data/Library/Application Support"
 
                         switch libInspection.status {
-                        case "已链接", "待规范":
+                        case "已链接", "待规范", DataDirStatus.mounted, DataDirStatus.pendingMount, DataDirStatus.volumeMissing:
                             var libItem = DataDirItem(
                                 name: "容器子目录: \(libSuffix)",
                                 path: libChild,
@@ -826,8 +954,8 @@ actor DataDirScanner {
                             let appSupportEntries = directoryEntries(at: libChild)
                             for appSupportChild in appSupportEntries {
                                 let asInspection = inspectItem(at: appSupportChild, type: .containers)
-                                let asSuffix = appSupportChild.path.replacingOccurrences(of: containerURL.path + "/", with: "")
-                                guard asInspection.status == "本地" || asInspection.status == "已链接" || asInspection.status == "待规范" else { continue }
+                                let asSuffix = containerRelativeSuffix(of: appSupportChild, in: containerURL)
+                                guard asInspection.status == "本地" || isManagedStatus(asInspection.status) else { continue }
 
                                 var asItem = DataDirItem(
                                     name: "容器子目录: \(asSuffix)",
@@ -876,7 +1004,7 @@ actor DataDirScanner {
             let resolvedTarget = resolveSymlinkDestination(at: childURL)
 
             // 处理已链接 / 待规范 / 外部软链的情况
-            if inspection.status == "已链接" || inspection.status == "待规范" {
+            if isManagedStatus(inspection.status) {
                 var item = makeWeChatParentItem(
                     relativeSuffix: relativeSuffix,
                     path: childURL,
@@ -976,7 +1104,7 @@ actor DataDirScanner {
             let nonMigratableReason = "请选择 xwechat_files 内的子目录进行迁移".localized
 
             var xItem: DataDirItem
-            if inspection.status == "已链接" || inspection.status == "待规范" {
+            if isManagedStatus(inspection.status) {
                 xItem = DataDirItem(
                     name: "容器子目录: \(relativeSuffix)",
                     path: childURL,
@@ -1039,7 +1167,7 @@ actor DataDirScanner {
             let inspection = inspectItem(at: childURL, type: .containers)
             let warning = "此目录位于沙盒应用容器内，迁移后应用可能无法打开。如遇此情况，请将该目录迁回本地即可恢复。".localized
 
-            if inspection.status == "已链接" || inspection.status == "待规范" {
+            if isManagedStatus(inspection.status) {
                 var item = DataDirItem(
                     name: "容器子目录: \(relativeSuffix)",
                     path: childURL,
@@ -1108,7 +1236,7 @@ actor DataDirScanner {
             let nonMigratableReason = "容器目录受沙盒保护，直接迁移会导致应用崩溃。请迁移其子目录。".localized
 
             var asItem: DataDirItem
-            if inspection.status == "已链接" || inspection.status == "待规范" {
+            if isManagedStatus(inspection.status) {
                 asItem = DataDirItem(
                     name: "容器子目录: \(relativeSuffix)",
                     path: childURL,
@@ -1173,7 +1301,7 @@ actor DataDirScanner {
             let inspection = inspectItem(at: childURL, type: .containers)
             let warning = "此目录位于沙盒应用容器内，迁移后应用可能无法打开。如遇此情况，请将该目录迁回本地即可恢复。".localized
 
-            if inspection.status == "已链接" || inspection.status == "待规范" {
+            if isManagedStatus(inspection.status) {
                 var item = DataDirItem(
                     name: "容器子目录: \(relativeSuffix)",
                     path: childURL,
@@ -1221,6 +1349,16 @@ actor DataDirScanner {
         }
 
         return results
+    }
+
+    /// 容器内相对路径（如 `Data/Documents`）。
+    /// 临时目录会以 `/var` 与 `/private/var` 两种写法出现，只解析父目录，不跟随条目本身的软链。
+    private func containerRelativeSuffix(of url: URL, in containerURL: URL) -> String {
+        let containerPath = containerURL.resolvingSymlinksInPath().path
+        let parentPath = url.deletingLastPathComponent().resolvingSymlinksInPath().path
+        let fullPath = parentPath + "/" + url.lastPathComponent
+        guard fullPath.hasPrefix(containerPath + "/") else { return url.lastPathComponent }
+        return String(fullPath.dropFirst(containerPath.count + 1))
     }
 
     private func shouldSurfaceNestedContainerLink(from sourceURL: URL, to targetURL: URL, externalRootURL: URL?) -> Bool {
@@ -1358,15 +1496,21 @@ actor DataDirScanner {
 
             let components = bundleID.split(separator: ".").map(String.init)
             if components.count >= 2 {
-                // 通用 TLD/后缀词汇，作为 containsMatch 会造成大范围误匹配
-                let genericSuffixes: Set<String> = ["app", "com", "org", "net", "io", "dev", "cn", "us", "uk", "de", "fr", "jp", "kr"]
+                // 通用 TLD / 平台 / 打包词汇，作为 containsMatch 会造成大范围误匹配
+                // （如 com.termius-dmg.mac 的 "mac" 会命中 com.tencent.QQMusicMac）。
+                let genericSuffixes: Set<String> = [
+                    "app", "com", "org", "net", "io", "dev", "cn", "us", "uk", "de", "fr", "jp", "kr",
+                    "mac", "macos", "osx", "desktop", "client", "helper", "dmg", "pkg", "free", "pro", "lite", "beta"
+                ]
                 for index in 1..<components.count {
                     let suffix = components[index...].joined(separator: ".")
-                    // 跳过纯通用 TLD 后缀（如 "app"、"com"）和由通用词汇组成的多段后缀
+                    // 跳过纯通用后缀（如 "app"、"mac"）和由通用词汇组成的多段后缀
                     if components[index...].allSatisfy({ genericSuffixes.contains($0.lowercased()) }) {
                         continue
                     }
-                    if suffix.count >= 3 {
+                    // 单段后缀必须足够独特；短于 4 个字符的单词（"mac"、"ide"）几乎必然误匹配
+                    let isSingleComponent = index == components.count - 1
+                    if suffix.count >= (isSingleComponent ? 4 : 3) {
                         containsMatches.append(suffix)
                     }
                 }
@@ -1737,8 +1881,15 @@ actor DataDirScanner {
         return plist["CFBundleIdentifier"] as? String
     }
 
-    /// 检测目录当前状态，并区分 AppPorts 受管链接和已有软链接。
+    /// 检测目录当前状态，并区分 AppPorts 受管链接、挂载迁移项和已有符号链接。
     private func inspectItem(at url: URL, type: DataDirType) -> (status: String, linkedDestination: URL?) {
+        if let record = mountRecord(for: url) {
+            if isMountPoint(url) {
+                return (DataDirStatus.mounted, nil)
+            }
+            return (isVolumeOnline(record.volumeUUID) ? DataDirStatus.pendingMount : DataDirStatus.volumeMissing, nil)
+        }
+
         if isSymbolicLinkPath(at: url) {
             let linkedDestination = resolveSymlinkDestination(at: url)
             guard let linkedDestination else {

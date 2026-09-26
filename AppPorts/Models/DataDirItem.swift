@@ -127,6 +127,15 @@ enum DataDirStatus {
     static let existingSymlink = "现有软链"
     static let pendingRelink = "待接回"
     static let missing = "未找到"
+    /// 挂载迁移：外置卷已挂载在原目录上
+    static let mounted = "已挂载"
+    /// 挂载迁移：外置卷在线但尚未挂载
+    static let pendingMount = "待挂载"
+    /// 挂载迁移：找不到外置卷（外部存储未连接或卷已删除）
+    static let volumeMissing = "卷丢失"
+
+    /// 由挂载迁移管理的三种状态
+    static let mountStatuses: Set<String> = [mounted, pendingMount, volumeMissing]
 
     static func localized(_ status: String) -> String {
         switch status {
@@ -142,6 +151,13 @@ enum DataDirStatus {
             return "待接回".localized
         case missing:
             return "未找到".localized
+        case mounted:
+            return "已挂载".localized
+        case pendingMount:
+            return "待挂载".localized
+        case volumeMissing:
+            // 最常见的原因只是外部存储没接上；「卷丢失」听起来像数据没了，界面上不这么说。
+            return "外置盘未连接".localized
         default:
             return status
         }
@@ -200,6 +216,7 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
     /// - "现有软链"：检测到已有符号链接，但并非 AppPorts 迁移结果
     /// - "待接回"：本地路径缺失，但外部已存在可直接接回的目录
     /// - "未找到"：路径不存在
+    /// - "已挂载" / "待挂载" / "卷丢失"：由挂载迁移管理，见 `ContainerVolumeMigrator`
     var status: String = "本地"
 
     /// 目录大小字符串（nil 表示计算中）
@@ -220,6 +237,10 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
 
     /// 迁移警告（可迁移但有风险时显示，用户确认后仍可继续）
     var migrationWarning: String? = nil
+
+    /// 沙盒应用的容器数据：内核按解析后的真实路径判定，符号链接指向容器外会被拒绝，
+    /// 只能把外置卷挂载到原目录上。为 true 时行内展示「挂载迁移」而不是符号链接迁移。
+    var requiresMountMigration: Bool = false
 
     // MARK: - 符号链接信息
 
@@ -242,6 +263,7 @@ struct DataDirItem: Identifiable, Equatable, Sendable {
         lhs.sizeBytes == rhs.sizeBytes &&
         lhs.linkedDestination == rhs.linkedDestination &&
         lhs.isMigratable == rhs.isMigratable &&
-        lhs.migrationWarning == rhs.migrationWarning
+        lhs.migrationWarning == rhs.migrationWarning &&
+        lhs.requiresMountMigration == rhs.requiresMountMigration
     }
 }
