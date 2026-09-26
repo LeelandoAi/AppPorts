@@ -4,8 +4,8 @@ layout: home
 
 hero:
   name: "AppPorts"
-  text: "應用遷移工具"
-  tagline: "專為 macOS 設計的應用遷移工具"
+  text: "外接硬碟拯救世界"
+  tagline: "將大型應用程式和資料目錄遷移到外接儲存裝置，自動建立本機入口，釋放寶貴的本機空間"
   actions:
     - theme: brand
       text: "快速開始"
@@ -21,13 +21,13 @@ hero:
 features:
   - icon: 🔄
     title: "無角標遷移"
-    details: "一鍵將大型應用遷移至外置硬碟。本地僅保留輕量啟動器殼，Finder 不顯示快捷方式箭頭，Launchpad 與應用選單正常顯示。"
+    details: "一鍵將大型應用程式遷移至外接儲存裝置。本機僅保留輕量啟動器殼，Finder 不顯示捷徑箭頭，Launchpad 與應用程式選單正常顯示。"
   - icon: 🔒
     title: "自動更新保護"
-    details: "自動識別 Sparkle、Electron 等自更新應用，提供「鎖定遷移」選項，防止外置硬碟上的應用被自動更新程式刪除或覆蓋。"
+    details: "自動辨識 Sparkle、Electron 等自更新應用程式，提供「锁定遷移」選項；本機新版高於外部舊副本時，會標記為「待遷出」。"
   - icon: 📦
     title: "資料目錄管理"
-    details: "支援將 ~/Library/ 子目錄、~/.npm 等資料遷移至外部儲存，提供樹形分組視圖、搜尋與排序功能。"
+    details: "支援將 ~/Library/ 子目錄、~/.npm 等資料目錄遷移至外接儲存裝置；沙盒容器資料（如微信聊天記錄）透過掛載遷移放到 APFS 外接磁碟，簽名不變更。"
 ---
 
 <script setup lang="ts">
