@@ -66,7 +66,9 @@ xcodebuild test -scheme "AppPorts" -destination 'platform=macOS,arch=arm64' \
 | `AppOperationStateTests` | Operation tokens and shared busy state | When touching operation gating |
 | `AppRunningStateTests` | Real-app running detection, paths, and bundle identifiers | When touching pre-operation running checks |
 | `DockShortcutServiceTests` | Existing pins, bookmarks, concurrent edits, and reload scheduling | When touching Dock synchronization |
-| `CodeSignerTests` / `DataMigrationWorkflowTests` | Real-app resolution, signing, locks, and ordered data migration | When touching signing or data migration workflow |
+| `CodeSignerTests` / `DataMigrationWorkflowTests` | Real-app resolution, signing, locks, sandbox refusal, and ordered data migration | When touching signing or data migration workflow |
+| `ContainerVolumeMigratorTests` | Mount migration with a fake `diskutil`: volume creation, in-place mount, rollback, restore, remount | When touching `ContainerVolumeMigrator`, `DiskUtility`, or `ContainerMountStore` |
+| `MigrationPreferencesTests` | Classic-mode gate and reminder dismissal persistence | When touching `MigrationPreferences` |
 | `MigrationSigningIntegrationTests` | Real signed bundles and app/data migration round trips | When changing migration and signing together |
 
 The test target mixes XCTest and Swift Testing. Use the shared `AppPorts` scheme for both; there is no separate `AppPortsTests` scheme. Dock tests inject a preference store and reload action so they do not alter the user's real Dock.
@@ -87,12 +89,15 @@ AppPorts/
 │   ├── Models/
 │   │   ├── AppModels.swift         # AppItem, AppMoverError, AppContainerKind
 │   │   ├── DataDirItem.swift       # DataDirItem, DataDirType, DataDirPriority
+│   │   ├── ContainerMountModels.swift # ContainerMountRecord (mount migration record)
+│   │   ├── MigrationPreferences.swift # Classic-mode gate, repair-reminder dismissals
 │   │   ├── CustomDirModels.swift   # CustomDirConfig, validation, display entries
 │   │   └── AppLanguageOption.swift # Language catalog (AppLanguageCatalog)
 │   ├── Views/
 │   │   ├── DataDirsView.swift      # Tool dirs + app data management
 │   │   ├── CustomDirsView.swift    # User-selected folder migration tab
-│   │   ├── AppStoreSettingsView.swift # Settings sheet
+│   │   ├── AppStoreSettingsView.swift # Settings sheet (incl. classic data migration mode)
+│   │   ├── SignatureRepairSheet.swift # Four-step repair panel for apps with replaced signatures
 │   │   └── Components/
 │   │       ├── AppIconView.swift   # Async app icon loader
 │   │       ├── AppRowView.swift    # App list row + context menu
@@ -105,15 +110,19 @@ AppPorts/
 │   │   ├── AppMigrationService.swift # App migration, portal creation, and Dock synchronization
 │   │   ├── AppLogger.swift         # Serialized logging + redacted diagnostic export
 │   │   ├── AppOperationState.swift # Shared operation token and busy state
+│   │   ├── ContainerMountStore.swift # Persists mount migration records (container-mounts.plist)
+│   │   ├── ContainerMountAgentInstaller.swift # Login agent that remounts container volumes (`--mount-agent`)
 │   │   ├── DataMigrationWorkflow.swift # Ordered signature backup → migration → signing
 │   │   ├── DockShortcutService.swift # Repair existing Dock pins and bookmarks
-│   │   └── CodeSigner.swift        # Real-app resolution, signing backup/restore and verification
+│   │   └── CodeSigner.swift        # Real-app resolution, entitlements/sandbox check, signing backup/restore and verification
 │   └── Utils/
 │       ├── AppRunningState.swift   # Match running real applications before operations
 │       ├── AppScanner.swift        # App scanner actor
+│       ├── ContainerVolumeMigrator.swift # Mount migration actor for sandboxed apps' container data
 │       ├── DataDirScanner.swift    # Data dir scanner actor
 │       ├── DataDirMover.swift      # Data dir migration, conflict checks, and recovery
 │       ├── CustomDirScanner.swift  # Custom folder status scanner
+│       ├── DiskUtility.swift       # diskutil/statfs wrapper with injectable command runner
 │       ├── FileCopier.swift        # Metadata-preserving copy with bounded network concurrency
 │       ├── FolderMonitor.swift     # DispatchSource filesystem watcher
 │       ├── LanguageManager.swift   # Global i18n manager + String.localized
@@ -142,7 +151,7 @@ AppPorts/
 | Setting | Value |
 |---------|-------|
 | Bundle ID | `com.shimoko.AppPorts` |
-| Marketing Version | `1.8.1` (`MARKETING_VERSION` in `project.pbxproj`) |
+| Marketing Version | `1.8.2` (`MARKETING_VERSION` in `project.pbxproj`) |
 | Deployment Target | macOS 12.0 (Monterey) |
 | Swift Version | 5.0 |
 | App Sandbox | **Disabled** (required for /Applications access) |
@@ -152,7 +161,7 @@ AppPorts/
 | Entitlements | None (no sandbox) |
 | UI Framework | SwiftUI views with AppKit window management (no storyboards/xibs) |
 
-Release notes for the `1.8.1` update live in `RELEASE_NOTES_1.8.1.md`. The project declares version `1.8.1`, build `1`; release notes do not create a release tag. Keep the Chinese and English notes aligned and begin each with a short user-facing summary. Icon explorations under `design/icon-exploration/` are drafts, not a shipped app-icon replacement.
+Release notes for the `1.8.1` update live in `RELEASE_NOTES_1.8.1.md`. The project now declares version `1.8.2`, build `2`; the `1.8.1` notes describe the prior release and do not create a release tag. Keep the Chinese and English notes aligned and begin each with a short user-facing summary. Icon explorations under `design/icon-exploration/` are drafts, not a shipped app-icon replacement.
 
 ### Core Pattern: Actor-based Concurrency
 
@@ -289,6 +298,21 @@ AppPorts detects self-updating apps and applies lock protection (`chflags -R uch
 Known tool directories use canonical external destinations under `<externalRoot>/<DataDirType.rawValue>/<lastPathComponent>`, for example `<externalRoot>/工具目录/.gradle`. `scanKnownDotFolders(externalRootURL:)` should hide items that are missing locally and externally, but surface `待接回` when the canonical external directory already exists.
 
 Custom directory migration stores configs in `UserDefaults` under `customDirConfigs`. A config keeps the real local source and an external base directory; the actual destination is `externalBaseURL / localURL.lastPathComponent`. Local sources must be real directories under the current user's home, cannot be the home directory itself, cannot pass through symlinked path components, and cannot overlap with another managed custom directory.
+
+### Sandboxed Apps and Mount Migration
+
+Sandboxed apps (real app's entitlements contain `com.apple.security.app-sandbox`) cannot follow symlinks out of `~/Library/Containers/` or `~/Library/Group Containers/`: the kernel checks the resolved path. Ad-hoc re-signing removes the sandbox but also breaks container ownership, and on macOS 27 such apps may fail to launch (confirmed: WeChat, whose stored TCC code requirement no longer matches; QQ Music still runs). Verified experiments live under `User_docs/docs/research/` (`sandbox-symlink.md`, `sandbox-mountpoint.md`, `unplug-test.md`); user-facing docs are `datamigrae/mount-migration.md`, `why-apfs.md`, and `macos-27.md`.
+
+- `CodeSigner.isSandboxed(at:)` / `entitlements(at:)` read entitlements via `codesign -d --entitlements`. `CodeSigner.sign` throws `sandboxedApplication` before touching the bundle; `restoreSignature` throws `identityUnavailable` instead of degrading to ad-hoc. `AppPorts-ReSign.sh` skips sandboxed apps.
+- Every migratable item under `Containers` / `Group Containers` gets `DataDirItem.requiresMountMigration = true` regardless of the main app's entitlements (the container's owner may be a sandboxed widget/extension, and already re-signed apps must not be symlinked again); the row shows “挂载迁移” instead of “迁移”. `DataDirScanner.isSandboxed(_:)` only decides whether re-signing is refused: `DataDirsView` never re-signs sandboxed apps regardless of the toggle or alert choice.
+- `ContainerVolumeMigrator` (actor) creates an APFS volume in the external drive's container (`diskutil apfs addVolume`), copies data through `FileCopier`, and mounts the volume at the original directory (`diskutil mount -mountPoint`). Records live in `ContainerMountStore` (`~/Library/Application Support/AppPorts/container-mounts.plist`); the volume root carries `.appports-mount-metadata.plist`. Unmounted mount points are kept at mode 000 so the app sees an empty directory rather than writing local data. Statuses: `已挂载`, `待挂载`, `卷丢失`.
+- Mounting requires Full Disk Access and an APFS external drive. First launch after migration triggers the system “removable volume” TCC prompt; platform apps under `/System` are silently denied and are not supported.
+- Remount runs on launch and on `NSWorkspace.didMountNotification`; `ContainerMountAgentInstaller` installs a LaunchAgent that runs `AppPorts --mount-agent` at login (handled in `AppMoverApp.init` before any UI). Do not use `/etc/fstab`.
+- `DiskUtility` takes an injectable `ShellCommandRunning`; tests use `FakeDiskCommandRunner` and never touch real disks.
+- Keep active mount records separate from pending cleanup records. Restore must persistently disable remounting before switching to local data; cleanup failure is partial success and must show the retained path or volume UUID. Retry never repeats the data migration. An explicit record-only removal preserves all copies and is refused while restore staging is still pending.
+- Each outer mount operation owns a separate `OperationLock` instance; the instance-level acquisition is intentionally idempotent. Recheck running applications after waiting for that lock and after signature backups, immediately before moving data.
+- **Classic data migration mode** (`MigrationPreferences.classicDataMigrationKey`, default off; not version-gated, `MigrationPreferences.isMacOS27OrLater` only picks wording): container items also offer symlink “迁移”, the container re-sign alert returns, `CodeSigner.sign(allowSandboxed: true)` is permitted after a per-app confirmation, the “迁移后重签名” toolbar toggle reappears, and `AppPorts-ReSign.sh` stops skipping sandboxed apps. Outside classic mode, “整理/接回/链接详情” are refused for container items.
+- **Signature-replaced detection**: `AppScanner` reads the signature backup via `CodeSigner.originalSigningIdentity`; a developer-identity backup plus a current ad-hoc signature sets `AppItem.signatureReplaced`. Scanning never deletes signature backups. Re-signing saves a verified full original application and operates on a work copy; restoration atomically replaces the real app from that snapshot without a developer private key. Legacy identity-only records require a matching official original app. A verified official update with the same developer identity gets a new snapshot; the prior record and snapshot are archived. UI: red “签名已替换” badge, one startup reminder (dismissals stored under `MigrationPreferences.dismissedSignatureRepairKey`), and `SignatureRepairSheet` (restore container data → move app back if reinstalling → restore original signature or reinstall → optional mount migration; never deletes anything).
 
 ### Real-Path Resolution for Linked Apps
 

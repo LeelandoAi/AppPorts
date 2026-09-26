@@ -1343,10 +1343,6 @@ DICT = {
         "id": "%@ (%lld aplikasi)",
         "eo": "%@ (%lld aplikaĵoj)"
     },
-    "双击打开系统设置": {
-        "en": "Double-click to open System Settings", "zh-Hans": "双击打开系统设置", "zh-Hant": "雙擊打開系統設定",
-        "ja": "ダブルクリックしてシステム設定を開く", "ko": "더블 클릭하여 시스템 설정 열기"
-    },
     "日志已清空": {
         "en": "Log cleared", "zh-Hans": "日志已清空", "zh-Hant": "日誌已清空",
         "ja": "ログをクリアしました", "ko": "로그 삭제됨"
