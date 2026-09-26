@@ -17,6 +17,13 @@ struct DataDirRowView: View {
     let onManageExistingLink: (DataDirItem) -> Void
     let onNormalizeManagedLink: (DataDirItem) -> Void
     let onRelinkExternalData: (DataDirItem) -> Void
+    /// 挂载迁移相关操作（仅应用数据页的沙盒应用容器项使用）
+    var onMountMigrate: ((DataDirItem) -> Void)? = nil
+    var onMount: ((DataDirItem) -> Void)? = nil
+    var onUnmount: ((DataDirItem) -> Void)? = nil
+    var onMountRestore: ((DataDirItem) -> Void)? = nil
+    /// 经典模式：容器目录同时提供符号链接「迁移」
+    var classicModeActive: Bool = false
 
     @State private var isHovered = false
 
@@ -56,6 +63,13 @@ struct DataDirRowView: View {
 
                     // 优先级标签
                     PriorityBadge(priority: item.priority)
+
+                    if item.requiresMountMigration {
+                        Image(systemName: "shield.lefthalf.filled")
+                            .font(.system(size: 10))
+                            .foregroundColor(.purple.opacity(0.8))
+                            .help("沙盒应用：容器数据只能通过挂载迁移放到外部存储，符号链接会被系统拒绝".localized)
+                    }
                 }
 
                 Text(item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
@@ -122,7 +136,9 @@ struct DataDirRowView: View {
 
     @ViewBuilder
     private var operationButtons: some View {
-        if item.status == "已链接" {
+        if DataDirStatus.mountStatuses.contains(item.status) {
+            mountOperationButtons
+        } else if item.status == "已链接" {
             // 已链接：显示「还原」按钮
             Button(action: { onRestore(item) }) {
                 HStack(spacing: 5) {
@@ -205,22 +221,118 @@ struct DataDirRowView: View {
                 .help("外部目录已存在，在原路径补建符号链接".localized)
             }
         } else if item.status == "本地" {
-            // 本地：显示「迁移」按钮
-            Button(action: { onMigrate(item) }) {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.right.circle.fill")
-                    Text("迁移".localized)
+            if item.requiresMountMigration, let onMountMigrate {
+                // 容器数据：挂载迁移；经典模式下额外提供符号链接迁移
+                if classicModeActive {
+                    Button(action: { onMigrate(item) }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.right.circle")
+                            Text("迁移".localized)
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().stroke(Color.accentColor.opacity(0.6), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help("经典模式：用符号链接迁移（不推荐）".localized)
                 }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule().fill(Color.accentColor)
-                )
+                Button(action: { onMountMigrate(item) }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "externaldrive.fill.badge.plus")
+                        Text("挂载迁移".localized)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.purple)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("在外部存储上创建 APFS 卷并挂载到此目录（实验性）".localized)
+            } else if item.requiresMountMigration {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary.opacity(0.5))
+                    .help("沙盒应用的容器数据不支持符号链接迁移".localized)
+            } else {
+                // 本地：显示「迁移」按钮
+                Button(action: { onMigrate(item) }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.right.circle.fill")
+                        Text("迁移".localized)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.accentColor)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("将数据目录迁移到外部存储".localized)
             }
-            .buttonStyle(.plain)
-            .help("将数据目录迁移到外部存储".localized)
+        }
+    }
+
+    /// 挂载迁移项：已挂载可卸载/还原，待挂载可挂载/还原，外置盘未连接时只提示。
+    @ViewBuilder
+    private var mountOperationButtons: some View {
+        HStack(spacing: 6) {
+            if item.status == DataDirStatus.mounted, let onUnmount {
+                Button(action: { onUnmount(item) }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "eject.fill")
+                        Text("卸载".localized)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.gray))
+                }
+                .buttonStyle(.plain)
+                .help("卸载外置卷。卸载后应用会看到空目录，请在拔盘前先退出应用".localized)
+            } else if item.status == DataDirStatus.pendingMount, let onMount {
+                Button(action: { onMount(item) }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "externaldrive.fill.badge.checkmark")
+                        Text("挂载".localized)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.purple))
+                }
+                .buttonStyle(.plain)
+                .help("把外置卷重新挂载到此目录".localized)
+            }
+
+            if item.status == DataDirStatus.volumeMissing {
+                Image(systemName: "externaldrive.badge.xmark")
+                    .font(.system(size: 13))
+                    .foregroundColor(.red.opacity(0.8))
+                    .help("外置盘未连接。连接这块外部存储后会自动接回；如果已经连接仍显示此状态，数据卷可能被改名或删除，请查看挂载迁移文档里的排查步骤".localized)
+            } else if let onMountRestore {
+                Button(action: { onMountRestore(item) }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.uturn.backward.circle.fill")
+                        Text("还原".localized)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.orange))
+                }
+                .buttonStyle(.plain)
+                .help("把数据复制回本地并删除外置卷".localized)
+            }
         }
     }
 
@@ -288,6 +400,9 @@ struct DataDirStatusBadge: View {
         case "现有软链": return "questionmark.circle"
         case "待接回": return "arrow.triangle.branch"
         case "本地":   return "internaldrive"
+        case "已挂载": return "externaldrive.fill.badge.checkmark"
+        case "待挂载": return "externaldrive.badge.plus"
+        case "卷丢失": return "externaldrive.badge.xmark"
         default:       return "questionmark"
         }
     }
@@ -299,6 +414,9 @@ struct DataDirStatusBadge: View {
         case "现有软链": return .teal
         case "待接回": return .indigo
         case "本地":   return .secondary
+        case "已挂载": return .purple
+        case "待挂载": return .orange
+        case "卷丢失": return .red
         default:       return .gray
         }
     }
@@ -310,6 +428,9 @@ struct DataDirStatusBadge: View {
         case "现有软链": return .teal.opacity(0.14)
         case "待接回": return .indigo.opacity(0.14)
         case "本地":   return Color.primary.opacity(0.05)
+        case "已挂载": return .purple.opacity(0.12)
+        case "待挂载": return .orange.opacity(0.14)
+        case "卷丢失": return .red.opacity(0.12)
         default:       return .gray.opacity(0.08)
         }
     }

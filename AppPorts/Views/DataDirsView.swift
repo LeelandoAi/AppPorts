@@ -44,10 +44,14 @@ struct DataDirsView: View {
     @Binding var isScanning: Bool
     /// 数据迁移完成后自动重签名开关，由 ContentView 顶部工具栏控制。
     @Binding var autoResignEnabled: Bool
+    /// 经典数据迁移模式生效：容器目录允许符号链接迁移，沙盒应用允许重签名。
+    let classicModeActive: Bool
     /// 父级工具栏触发刷新时递增。
     let refreshTrigger: Int
     /// 选择外部存储路径的回调
     let onSelectExternalDrive: () -> Void
+    /// 打开签名修复面板
+    var onRepairSignature: ((AppItem) -> Void)? = nil
     /// 数据迁移完成后对关联应用执行重签名的回调（Bool = 是否静默，true 则不弹错误框）
     let onResignApp: ((AppItem, Bool) -> Void)?
     /// 恢复应用原始签名的回调
@@ -56,8 +60,8 @@ struct DataDirsView: View {
     let onBackupSignature: ((AppItem) -> Void)?
     /// 解析应用真实路径（已链接→外部，未链接→本地），不返回假壳路径
     let resolveRealAppURL: (AppItem) throws -> URL
-    /// 对指定 URL 重签名（autoResignEnabled 专用，签真实应用）
-    let onResignAppAtURL: (URL) async throws -> Void
+    /// 对指定 URL 重签名；Bool 仅表示本次已明确批准该沙盒应用，不能由全局开关代替。
+    let onResignAppAtURL: (URL, Bool) async throws -> Void
     /// 对指定 URL 备份签名（autoResignEnabled 专用）
     let onBackupSignatureForURL: (URL) async throws -> Void
 
@@ -80,24 +84,28 @@ struct DataDirsView: View {
     @State private var progressTitle = ""
 
     // 确认弹窗
-    @State private var showConfirm = false
-    @State private var confirmTitle = ""
-    @State private var confirmMessage = ""
-    @State private var confirmActionTitle = "继续".localized
-    @State private var confirmAction: (() -> Void)? = nil
-    @State private var showAppDataMigrationRiskConfirm = false
+    @State private var confirmRequest: WarningSheetRequest?
+    @State private var appDataMigrationRiskRequest: WarningSheetRequest?
     @State private var pendingMigrationItem: DataDirItem? = nil
     @State private var pendingMigrationDestinationPath: URL? = nil
     @State private var pendingMigrationShouldResign: Bool? = nil
     @State private var pendingMigrationApp: AppItem? = nil
-    @State private var showContainerDataResignConfirm = false
-    @State private var containerDataResignMessage = ""
-    @State private var showManagedLinkNormalizationConfirm = false
-    @State private var managedLinkNormalizationMessage = ""
+    @State private var pendingApprovedSandboxedTarget: DataMigrationWorkflow.SigningTarget?
+    @State private var containerDataResignRequest: WarningSheetRequest?
+    @State private var managedLinkNormalizationRequest: WarningSheetRequest?
     @State private var managedLinkNormalizationItem: DataDirItem? = nil
     @State private var managedLinkNormalizationCurrentTarget: URL? = nil
-    @State private var showMigrationRiskAlert = false
-    @State private var migrationRiskMessage = ""
+    @State private var migrationRiskRequest: WarningSheetRequest?
+
+    // 挂载迁移（沙盒应用容器数据）
+    @State private var selectedAppIsSandboxed = false
+    @State private var mountMigrationRequest: WarningSheetRequest?
+    @State private var pendingMountMigrationItem: DataDirItem? = nil
+    /// 挂载迁移前正在检查目标盘；检查期间忽略重复点击
+    @State private var isCheckingMountDestination = false
+    @State private var pendingCleanups: [ContainerCleanupRecord] = []
+    @State private var cleanupWarning: ContainerVolumeMigrator.CleanupWarning?
+    @State private var showCleanupWarning = false
 
     // 错误弹窗
     @State private var showError = false
@@ -151,12 +159,30 @@ struct DataDirsView: View {
         }
     }
 
-    private let appDataStatusOrder = ["本地", "已链接", "待规范", "现有软链", "待接回", "未找到"]
+    private let appDataStatusOrder = ["本地", "已链接", "已挂载", "待挂载", "卷丢失", "待规范", "现有软链", "待接回", "未找到"]
 
     // MARK: - Body
 
     var body: some View {
         VStack(spacing: 0) {
+            if !pendingCleanups.isEmpty {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
+                    Spacer()
+                    Menu("重试清理".localized) {
+                        ForEach(pendingCleanups) { cleanup in
+                            let location = cleanup.kind == .migrationBackup ? "本地".localized : "外部存储".localized
+                            Button {
+                                presentPendingCleanup(cleanup)
+                            } label: {
+                                Text(verbatim: "\(cleanup.mountRecord.appName) · \(cleanup.mountRecord.mountPointURL.lastPathComponent) (\(location))")
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
             // ── 主内容区 ────────────────────────────────────────
             if selectedTab == .toolDirs {
                 toolDirsContent
@@ -181,68 +207,28 @@ struct DataDirsView: View {
             reloadCurrentTab()
         }
         // 确认弹窗
-        .alert(LocalizedStringKey(confirmTitle), isPresented: $showConfirm) {
-            Button(confirmActionTitle, role: .none) { confirmAction?() }
-            Button("取消".localized, role: .cancel) {}
-        } message: {
-            Text(confirmMessage)
-        }
-        .alert("迁移前请先备份".localized, isPresented: $showAppDataMigrationRiskConfirm) {
-            Button("继续".localized, role: .none) {
-                continuePendingMigrationFlow()
-            }
-            Button("取消".localized, role: .cancel) {
-                clearPendingMigrationConfirmation()
-            }
-        } message: {
-            Text(
-                "迁移应用数据可能导致目标软件出现不可预料的兼容性问题。建议你先自行备份当前数据，再在副本或可接受风险的环境中迁移并测试，确认软件工作正常后再继续长期使用。".localized
-            )
-        }
-        .alert("确认规范化管理".localized, isPresented: $showManagedLinkNormalizationConfirm) {
-            Button("确认".localized, role: .none) {
-                if let item = managedLinkNormalizationItem,
-                   let target = managedLinkNormalizationCurrentTarget {
-                    performManageExistingLink(item, target: target)
-                }
-                clearManagedLinkNormalizationState()
-            }
-            Button("取消".localized, role: .cancel) {
-                clearManagedLinkNormalizationState()
-            }
-        } message: {
-            Text(managedLinkNormalizationMessage)
-        }
-        .alert("迁移风险提示".localized, isPresented: $showMigrationRiskAlert) {
-            Button("继续".localized, role: .none) {
-                continuePendingMigrationFlow()
-            }
-            Button("取消".localized, role: .cancel) {
-                clearPendingMigrationConfirmation()
-            }
-        } message: {
-            Text(migrationRiskMessage)
-        }
-        .alert("data_dir_resign_alert_title".localized, isPresented: $showContainerDataResignConfirm) {
-            Button("data_dir_resign_alert_accept".localized, role: .none) {
-                pendingMigrationShouldResign = true
-                presentPendingMigrationConfirmation()
-            }
-            Button("data_dir_resign_alert_decline".localized, role: .none) {
-                pendingMigrationShouldResign = false
-                presentPendingMigrationConfirmation()
-            }
-            Button("取消".localized, role: .cancel) {
-                clearPendingMigrationConfirmation()
-            }
-        } message: {
-            Text(containerDataResignMessage)
-        }
+        .warningSheet($confirmRequest)
+        .warningSheet($appDataMigrationRiskRequest)
+        .warningSheet($managedLinkNormalizationRequest)
+        .warningSheet($migrationRiskRequest)
+        .warningSheet($containerDataResignRequest)
+        .warningSheet($mountMigrationRequest)
         // 错误弹窗
         .alert("操作失败".localized, isPresented: $showError) {
             Button("好的".localized, role: .cancel) {}
         } message: {
             Text(errorMessage)
+        }
+        .alert("已完成，但仍有清理事项".localized, isPresented: $showCleanupWarning) {
+            Button("重试清理".localized) {
+                if let warning = cleanupWarning { retryCleanup(warning) }
+            }
+            Button("仅移除清理记录".localized) {
+                if let warning = cleanupWarning { confirmDiscardCleanupRecord(warning.cleanup) }
+            }
+            Button("稍后".localized, role: .cancel) {}
+        } message: {
+            Text(cleanupWarning?.message ?? "")
         }
         .alert("需要 App 管理权限".localized, isPresented: $showPermissionAlert) {
             Button("打开系统设置".localized) {
@@ -427,6 +413,7 @@ struct DataDirsView: View {
                 else {
                     libraryScanToken = UUID()
                     libraryItems = []
+                    selectedAppIsSandboxed = false
                     isScanning = false
                 }
             }
@@ -468,6 +455,10 @@ struct DataDirsView: View {
                 // 外部存储路径提示
                 if externalDriveURL == nil { externalDriveWarning }
 
+                if let app = selectedApp, app.signatureReplaced {
+                    signatureReplacedBanner(for: app)
+                }
+
                 // 统计栏
                 if !libraryItems.isEmpty {
                     statsBar(items: filteredLibraryItems)
@@ -496,7 +487,12 @@ struct DataDirsView: View {
                                         onRestore: askRestore,
                                         onManageExistingLink: askManageExistingLink,
                                         onNormalizeManagedLink: askNormalizeManagedLink,
-                                        onRelinkExternalData: askRelinkExternalData
+                                        onRelinkExternalData: askRelinkExternalData,
+                                        onMountMigrate: askMountMigrate,
+                                        onMount: performMount,
+                                        onUnmount: performUnmount,
+                                        onMountRestore: askMountRestore,
+                                        classicModeActive: classicModeActive
                                     )
                                 }
                             }
@@ -526,6 +522,26 @@ struct DataDirsView: View {
         .padding(10)
         .background(Color.orange.opacity(0.08))
         .overlay(Rectangle().frame(height: 1).foregroundColor(.orange.opacity(0.2)), alignment: .bottom)
+    }
+
+    private func signatureReplacedBanner(for app: AppItem) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .foregroundColor(.red)
+            Text("此应用的签名曾被 AppPorts 替换，在 macOS 27 上可能无法正常启动。如果它现在能正常启动，可以暂不处理；无法打开请根据右侧修复步骤恢复。".localized)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            if let onRepairSignature {
+                Button("查看修复步骤".localized) { onRepairSignature(app) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(Color.red.opacity(0.06))
+        .overlay(Rectangle().frame(height: 1).foregroundColor(.red.opacity(0.2)), alignment: .bottom)
     }
 
     private var appDataFilterButton: some View {
@@ -671,6 +687,7 @@ struct DataDirsView: View {
         }
         let total = rootItems.filter { $0.status == "本地" }.reduce(0) { $0 + $1.sizeBytes }
         let linked = items.filter { $0.status == "已链接" }.count
+        let mounted = items.filter { DataDirStatus.mountStatuses.contains($0.status) }.count
         let needsNormalization = items.filter { $0.status == "待规范" }.count
         let existingSymlinks = items.filter { $0.status == "现有软链" }.count
         let relinkable = items.filter { $0.status == "待接回" }.count
@@ -687,6 +704,10 @@ struct DataDirsView: View {
             if linked > 0 {
                 Label(String(format: "%lld 个已链接".localized, Int64(linked)), systemImage: "link.circle.fill")
                     .foregroundColor(.green)
+            }
+            if mounted > 0 {
+                Label(String(format: "%lld 个挂载迁移".localized, Int64(mounted)), systemImage: "externaldrive.fill.badge.checkmark")
+                    .foregroundColor(.purple)
             }
             if needsNormalization > 0 {
                 Label(String(format: "%lld 个待整理".localized, Int64(needsNormalization)), systemImage: "arrow.triangle.2.circlepath")
@@ -728,8 +749,8 @@ struct DataDirsView: View {
         libraryItems.filter(matchesAppDataFilters)
     }
 
-    /// 链接状态优先级：已链接、待规范、现有软链优先展示
-    private let statusPriority: [String] = ["已链接", "待规范", "现有软链", "待接回", "本地", "未找到"]
+    /// 链接状态优先级：已链接、挂载迁移、待规范、现有软链优先展示
+    private let statusPriority: [String] = ["已链接", "已挂载", "待挂载", "卷丢失", "待规范", "现有软链", "待接回", "本地", "未找到"]
 
     private func statusSortKey(_ status: String) -> Int {
         statusPriority.firstIndex(of: status) ?? statusPriority.count
@@ -820,7 +841,7 @@ struct DataDirsView: View {
     private var activeAppDataFilterLabels: [String] {
         var labels: [String] = []
         labels.append(contentsOf: DataDirPriority.allCases.filter(selectedPriorityFilters.contains).map(\.localizedTitle))
-        labels.append(contentsOf: appDataStatusOrder.filter(selectedStatusFilters.contains).map { $0.localized })
+        labels.append(contentsOf: appDataStatusOrder.filter(selectedStatusFilters.contains).map(DataDirStatus.localized))
         labels.append(contentsOf: appDataFilterTypes.filter(selectedTypeFilters.contains).map(\.localizedTitle))
         return labels
     }
@@ -892,6 +913,10 @@ struct DataDirsView: View {
     // MARK: - 扫描逻辑
 
     private func reloadCurrentTab() {
+        do { pendingCleanups = try ContainerMountStore.shared.pendingCleanups() }
+        catch {
+            AppLogger.shared.logError("无法读取待清理记录，保留原文件", error: error, errorCode: "CONTAINER-CLEANUP-RECORD-READ-FAILED")
+        }
         AppLogger.shared.logContext(
             "刷新数据目录当前标签",
             details: [
@@ -1004,12 +1029,15 @@ struct DataDirsView: View {
         )
         Task.detached(priority: .userInitiated) {
             let scanner = DataDirScanner()
+            // 沙盒应用迁移数据后不能重签名；先算一次供整页使用。
+            let isSandboxed = await scanner.isSandboxed(app)
             let items = await scanner.scanLibraryDirs(for: app, externalRootURL: selectedExternalRoot)
 
             await MainActor.run {
                 guard self.libraryScanToken == scanToken,
                       self.selectedApp?.id == appID else { return }
                 self.libraryItems = items
+                self.selectedAppIsSandboxed = isSandboxed
                 self.isScanning = false
             }
             AppLogger.shared.logContext(
@@ -1017,6 +1045,7 @@ struct DataDirsView: View {
                 details: [
                     ("scan_id", scanID),
                     ("app_name", appDisplayName),
+                    ("sandboxed", isSandboxed ? "true" : "false"),
                     ("count", String(items.count)),
                     ("statuses", Dictionary(grouping: items, by: \.status).map { "\($0.key)=\($0.value.count)" }.sorted().joined(separator: ", "))
                 ]
@@ -1068,6 +1097,12 @@ struct DataDirsView: View {
     // MARK: - 迁移 / 还原 确认
 
     private func askMigrate(_ item: DataDirItem) {
+        // 容器数据只能挂载迁移；符号链接会被内核按真实路径拒绝。经典模式下由用户自担风险。
+        if item.requiresMountMigration && !classicModeActive {
+            askMountMigrate(item)
+            return
+        }
+
         guard let dest = externalDriveURL else {
             AppLogger.shared.logError(
                 "请求迁移数据目录被拒绝：未选择外部路径",
@@ -1099,13 +1134,25 @@ struct DataDirsView: View {
 
         let destPath = suggestedDestinationPath(for: item, under: dest)
 
-        // 沙盒容器子目录迁移风险警告
-        if let warning = item.migrationWarning {
+        // 沙盒容器子目录迁移风险警告；经典模式下容器目录一律提示
+        let classicContainerWarning: String? = (item.requiresMountMigration && classicModeActive)
+            ? "经典模式：此目录位于沙盒应用容器内。符号链接迁移后，沙盒应用只有在重签名后才能读到数据，而重签名过的应用在 macOS 27 上可能无法打开。推荐改用「挂载迁移」。".localized
+            : nil
+        if let warning = item.migrationWarning ?? classicContainerWarning {
             pendingMigrationItem = item
             pendingMigrationDestinationPath = destPath
             pendingMigrationApp = selectedTab == .appDirs ? selectedApp : nil
-            migrationRiskMessage = warning
-            showMigrationRiskAlert = true
+            migrationRiskRequest = WarningSheetRequest(
+                title: "迁移风险提示".localized,
+                tint: .orange,
+                intro: warning,
+                onCancel: { clearPendingMigrationConfirmation() },
+                actions: [
+                    WarningAction("继续".localized, style: .preferred) {
+                        continuePendingMigrationFlow()
+                    }
+                ]
+            )
             return
         }
 
@@ -1113,7 +1160,7 @@ struct DataDirsView: View {
             pendingMigrationItem = item
             pendingMigrationDestinationPath = destPath
             pendingMigrationApp = selectedApp
-            showAppDataMigrationRiskConfirm = true
+            appDataMigrationRiskRequest = makeAppDataMigrationRiskRequest()
             return
         }
 
@@ -1130,15 +1177,24 @@ struct DataDirsView: View {
 
         let linkedDest = item.linkedDestination?.path ?? "（未知）".localized
 
-        confirmTitle = "还原数据目录".localized
-        confirmActionTitle = "继续".localized
-        confirmMessage = String(format: "将「%@」从外部存储还原到本地。\n\n外部路径：%@\n还原到：%@\n\n还原完成后，外部存储中的副本将被删除。".localized,
-            item.name, linkedDest, item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-        confirmAction = { performRestore(item) }
-        showConfirm = true
+        confirmRequest = makeConfirmRequest(
+            title: "还原数据目录".localized,
+            actionTitle: "继续".localized,
+            message: String(format: "将「%@」从外部存储还原到本地。\n\n外部路径：%@\n还原到：%@\n\n还原完成后，外部存储中的副本将被删除。".localized,
+                item.name, linkedDest, item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")),
+            action: { performRestore(item) }
+        )
+    }
+
+    private func isContainerSymlinkOperationBlocked(_ item: DataDirItem) -> Bool {
+        guard item.type == .containers || item.type == .groupContainers, !classicModeActive else { return false }
+        errorMessage = "容器目录不再使用符号链接迁移。请先「还原」到本地，再使用「挂载迁移」。".localized
+        showError = true
+        return true
     }
 
     private func askManageExistingLink(_ item: DataDirItem) {
+        if isContainerSymlinkOperationBlocked(item) { return }
         guard let linkedDest = item.linkedDestination else {
             AppLogger.shared.logError(
                 "请求接管现有软链失败：无法读取目标路径",
@@ -1150,15 +1206,17 @@ struct DataDirsView: View {
             return
         }
 
-        confirmTitle = "现有软链".localized
-        confirmActionTitle = "规范化管理".localized
-        confirmMessage = String(format: "检测到「%@」已经是一个现有软链。\n\n软链路径：%@\n目标路径：%@\n\n选择「规范化管理」后，AppPorts 会将这条软链接纳入受管状态，后续可直接还原。".localized,
-            item.name, item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), linkedDest.path)
-        confirmAction = { queueManagedLinkNormalization(item, currentTarget: linkedDest) }
-        showConfirm = true
+        confirmRequest = makeConfirmRequest(
+            title: "现有软链".localized,
+            actionTitle: "规范化管理".localized,
+            message: String(format: "检测到「%@」已经是一个现有软链。\n\n软链路径：%@\n目标路径：%@\n\n选择「规范化管理」后，AppPorts 会将这条软链接纳入受管状态，后续可直接还原。".localized,
+                item.name, item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), linkedDest.path),
+            action: { queueManagedLinkNormalization(item, currentTarget: linkedDest) }
+        )
     }
 
     private func askNormalizeManagedLink(_ item: DataDirItem) {
+        if isContainerSymlinkOperationBlocked(item) { return }
         // 检查关联应用是否正在运行
         if let runningAppName = runningAssociatedAppName(for: item) {
             errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再整理其数据目录。".localized, runningAppName)
@@ -1179,12 +1237,13 @@ struct DataDirsView: View {
 
         let normalizedTarget = normalizedManagementDestination(for: item, currentTarget: linkedDest)
 
-        confirmTitle = "整理已链接目录".localized
-        confirmActionTitle = "继续".localized
-        confirmMessage = String(format: "检测到「%@」已经由 AppPorts 接管，但外部目标仍位于旧路径。\n\n当前外部路径：%@\n规范后路径：%@\n\n继续后将进入二次确认，并执行真实迁移。".localized,
-            item.name, linkedDest.path, normalizedTarget.path)
-        confirmAction = { queueManagedLinkNormalization(item, currentTarget: linkedDest) }
-        showConfirm = true
+        confirmRequest = makeConfirmRequest(
+            title: "整理已链接目录".localized,
+            actionTitle: "继续".localized,
+            message: String(format: "检测到「%@」已经由 AppPorts 接管，但外部目标仍位于旧路径。\n\n当前外部路径：%@\n规范后路径：%@\n\n继续后将进入二次确认，并执行真实迁移。".localized,
+                item.name, linkedDest.path, normalizedTarget.path),
+            action: { queueManagedLinkNormalization(item, currentTarget: linkedDest) }
+        )
     }
 
     private func queueManagedLinkNormalization(_ item: DataDirItem, currentTarget: URL) {
@@ -1197,15 +1256,32 @@ struct DataDirsView: View {
 
         managedLinkNormalizationItem = item
         managedLinkNormalizationCurrentTarget = currentTarget
-        managedLinkNormalizationMessage = String(format: "请确认是否继续规范化管理「%@」。\n\n现在的路径：%@\n规范后路径：%@\n\n%@".localized,
-            item.name, currentPath, normalizedPath, note)
-        showConfirm = false
+        let request = WarningSheetRequest(
+            title: "确认规范化管理".localized,
+            icon: "questionmark.circle.fill",
+            tint: .blue,
+            intro: String(format: "请确认是否继续规范化管理「%@」。\n\n现在的路径：%@\n规范后路径：%@\n\n%@".localized,
+                item.name, currentPath, normalizedPath, note),
+            onCancel: { clearManagedLinkNormalizationState() },
+            actions: [
+                WarningAction("确认".localized, style: .preferred) {
+                    if let item = managedLinkNormalizationItem,
+                       let target = managedLinkNormalizationCurrentTarget {
+                        performManageExistingLink(item, target: target)
+                    }
+                    clearManagedLinkNormalizationState()
+                }
+            ]
+        )
+        confirmRequest = nil
+        // 先关掉上一个弹窗，下一拍再开这一个，避免同一帧内切换 sheet。
         DispatchQueue.main.async {
-            self.showManagedLinkNormalizationConfirm = true
+            self.managedLinkNormalizationRequest = request
         }
     }
 
     private func askRelinkExternalData(_ item: DataDirItem) {
+        if isContainerSymlinkOperationBlocked(item) { return }
         // 检查关联应用是否正在运行
         if let runningAppName = runningAssociatedAppName(for: item) {
             errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再接回其数据目录。".localized, runningAppName)
@@ -1224,12 +1300,13 @@ struct DataDirsView: View {
             return
         }
 
-        confirmTitle = "接回外部数据".localized
-        confirmActionTitle = "接回".localized
-        confirmMessage = String(format: "检测到「%@」的数据目录已存在于外部存储，但本地原路径尚未建立链接。\n\n本地原路径：%@\n外部目录：%@\n\n选择「接回」后，AppPorts 会在原路径补建符号链接，并将其纳入受管状态。".localized,
-            item.name, item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), linkedDest.path)
-        confirmAction = { performRelinkExternalData(item, target: linkedDest) }
-        showConfirm = true
+        confirmRequest = makeConfirmRequest(
+            title: "接回外部数据".localized,
+            actionTitle: "接回".localized,
+            message: String(format: "检测到「%@」的数据目录已存在于外部存储，但本地原路径尚未建立链接。\n\n本地原路径：%@\n外部目录：%@\n\n选择「接回」后，AppPorts 会在原路径补建符号链接，并将其纳入受管状态。".localized,
+                item.name, item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), linkedDest.path),
+            action: { performRelinkExternalData(item, target: linkedDest) }
+        )
     }
 
     // MARK: - 执行操作
@@ -1238,7 +1315,8 @@ struct DataDirsView: View {
         _ item: DataDirItem,
         to dest: URL,
         shouldResignAssociatedApp: Bool? = nil,
-        associatedApp: AppItem? = nil
+        associatedApp: AppItem? = nil,
+        approvedSandboxedTarget: DataMigrationWorkflow.SigningTarget? = nil
     ) {
         if let runningAppName = runningAssociatedAppName(for: item, associatedApp: associatedApp) {
             errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再迁移其数据目录。".localized, runningAppName)
@@ -1252,19 +1330,8 @@ struct DataDirsView: View {
         progressFileName = ""
         showProgress = true
         let operationID = AppLogger.shared.makeOperationID(prefix: "view-data-migrate")
-        let shouldResign = shouldResignAssociatedApp ?? autoResignEnabled
         let capturedApp = associatedApp
-        AppLogger.shared.logContext(
-            "用户确认迁移数据目录",
-            details: [
-                ("operation_id", operationID),
-                ("item_name", item.name),
-                ("type", item.type.rawValue),
-                ("source", item.path.path),
-                ("destination_root", dest.path),
-                ("should_resign_associated_app", shouldResign ? "true" : "false")
-            ] + appContextFields(for: capturedApp)
-        )
+        let requestedSigning = shouldResignAssociatedApp ?? autoResignEnabled
 
         Task { @MainActor in
             defer {
@@ -1273,15 +1340,40 @@ struct DataDirsView: View {
             }
             let mover = DataDirMover()
             do {
-                let realAppURL: URL?
-                if shouldResign, let app = capturedApp {
-                    realAppURL = try self.resolveRealAppURL(app)
+                let signingAppURL: URL?
+                let signingTarget: DataMigrationWorkflow.SigningTarget?
+                if requestedSigning, let app = capturedApp {
+                    let target = try DataMigrationWorkflow.signingTarget(at: app.displayURL)
+                    signingTarget = target
+                    // 默认模式仍然只迁移数据；经典模式须由工作流核验这个真实应用的批准。
+                    signingAppURL = target.isSandboxed && !classicModeActive ? nil : app.displayURL
                 } else {
-                    realAppURL = nil
+                    signingTarget = nil
+                    signingAppURL = nil
                 }
+                AppLogger.shared.logContext(
+                    "用户确认迁移数据目录",
+                    details: [
+                        ("operation_id", operationID),
+                        ("item_name", item.name),
+                        ("type", item.type.rawValue),
+                        ("source", item.path.path),
+                        ("destination_root", dest.path),
+                        ("associated_app_sandboxed", signingTarget.map { $0.isSandboxed ? "true" : "false" } ?? "not_checked"),
+                        ("should_resign_associated_app", signingAppURL != nil ? "true" : "false")
+                    ] + appContextFields(for: capturedApp)
+                )
 
                 try await DataMigrationWorkflow.run(
-                    signingAppURL: realAppURL,
+                    signingAppURL: signingAppURL,
+                    classicModeActive: classicModeActive,
+                    approvedSandboxedTarget: approvedSandboxedTarget,
+                    validateBeforeMigration: {
+                        // 备份原应用可能耗时较长；实际搬数据前重新读取运行状态。
+                        if self.runningAssociatedAppName(for: item, associatedApp: capturedApp) != nil {
+                            throw AppMoverError.appIsRunning
+                        }
+                    },
                     backupSignature: onBackupSignatureForURL,
                     migrate: {
                         try await mover.migrate(item: item, to: dest) { progress in
@@ -1292,14 +1384,14 @@ struct DataDirsView: View {
                             }
                         }
                     },
-                    resignApp: { url in
+                    resignApp: { url, sandboxedAppApproved in
                         await MainActor.run {
                             self.progressTitle = "重签名此应用".localized
                             self.progressFileName = url.lastPathComponent
                             self.progressBytes = 0
                             self.progressTotalBytes = 0
                         }
-                        try await self.onResignAppAtURL(url)
+                        try await self.onResignAppAtURL(url, sandboxedAppApproved)
                     }
                 )
                 AppLogger.shared.logContext(
@@ -1329,23 +1421,58 @@ struct DataDirsView: View {
         for item: DataDirItem,
         destinationPath: URL,
         shouldResignAssociatedApp: Bool? = nil,
-        associatedApp: AppItem? = nil
+        associatedApp: AppItem? = nil,
+        approvedSandboxedTarget: DataMigrationWorkflow.SigningTarget? = nil
     ) {
         let sizeInfo = item.size.map { String(format: "，大小约 %@".localized, $0) } ?? ""
 
-        confirmTitle = "迁移数据目录".localized
-        confirmActionTitle = "继续".localized
-        confirmMessage = String(format: "将「%@」迁移到外部存储%@。\n\n源路径：%@\n目标路径：%@\n\n迁移完成后，原路径将自动变成符号链接，相关工具无需任何修改即可继续使用。".localized,
-            item.name, sizeInfo, item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), destinationPath.path)
-        confirmAction = {
-            performMigrate(
-                item,
-                to: destinationPath.deletingLastPathComponent(),
-                shouldResignAssociatedApp: shouldResignAssociatedApp,
-                associatedApp: associatedApp
-            )
-        }
-        showConfirm = true
+        confirmRequest = makeConfirmRequest(
+            title: "迁移数据目录".localized,
+            actionTitle: "继续".localized,
+            message: String(format: "将「%@」迁移到外部存储%@。\n\n源路径：%@\n目标路径：%@\n\n迁移完成后，原路径将自动变成符号链接，相关工具无需任何修改即可继续使用。".localized,
+                item.name, sizeInfo, item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"), destinationPath.path),
+            action: {
+                performMigrate(
+                    item,
+                    to: destinationPath.deletingLastPathComponent(),
+                    shouldResignAssociatedApp: shouldResignAssociatedApp,
+                    associatedApp: associatedApp,
+                    approvedSandboxedTarget: approvedSandboxedTarget
+                )
+            }
+        )
+    }
+
+    /// 组装「迁移数据目录前请先备份」风险确认弹窗的内容快照。
+    private func makeAppDataMigrationRiskRequest() -> WarningSheetRequest {
+        WarningSheetRequest(
+            title: "迁移前请先备份".localized,
+            icon: "externaldrive.badge.exclamationmark",
+            tint: .orange,
+            intro: "迁移应用数据可能导致目标软件出现不可预料的兼容性问题。建议你先自行备份当前数据，再在副本或可接受风险的环境中迁移并测试，确认软件工作正常后再继续长期使用。".localized,
+            onCancel: { clearPendingMigrationConfirmation() },
+            actions: [
+                WarningAction("继续".localized, style: .preferred) {
+                    continuePendingMigrationFlow()
+                }
+            ]
+        )
+    }
+
+    /// 组装一个「标题 + 正文 + 单个继续按钮」的确认弹窗。
+    private func makeConfirmRequest(
+        title: String,
+        actionTitle: String,
+        message: String,
+        action: @escaping () -> Void
+    ) -> WarningSheetRequest {
+        WarningSheetRequest(
+            title: title,
+            icon: "questionmark.circle.fill",
+            tint: .blue,
+            intro: message,
+            actions: [WarningAction(actionTitle, style: .preferred, handler: action)]
+        )
     }
 
     private func continuePendingMigrationFlow() {
@@ -1355,12 +1482,28 @@ struct DataDirsView: View {
             return
         }
 
-        showMigrationRiskAlert = false
-        showAppDataMigrationRiskConfirm = false
+        migrationRiskRequest = nil
 
-        if shouldAskForContainerDataResign(item), pendingMigrationShouldResign == nil {
-            presentContainerDataResignConfirmation(for: item, associatedApp: pendingMigrationApp)
-            return
+        let offersContainerSigningChoice = shouldAskForContainerDataResign(item)
+            && pendingMigrationShouldResign == nil
+        let wantsSigning = pendingMigrationShouldResign ?? autoResignEnabled
+        if (offersContainerSigningChoice || wantsSigning), let app = pendingMigrationApp {
+            do {
+                let target = try DataMigrationWorkflow.signingTarget(at: app.displayURL)
+                if target.isSandboxed && !classicModeActive {
+                    pendingMigrationShouldResign = false
+                    pendingApprovedSandboxedTarget = nil
+                } else if offersContainerSigningChoice
+                    || (target.isSandboxed && pendingApprovedSandboxedTarget != target) {
+                    presentContainerDataResignConfirmation(for: target)
+                    return
+                }
+            } catch {
+                clearPendingMigrationConfirmation()
+                errorMessage = error.localizedDescription
+                showError = true
+                return
+            }
         }
 
         presentPendingMigrationConfirmation()
@@ -1374,28 +1517,48 @@ struct DataDirsView: View {
         }
         let shouldResign = pendingMigrationShouldResign
         let associatedApp = pendingMigrationApp
+        let approvedSandboxedTarget = pendingApprovedSandboxedTarget
 
-        showContainerDataResignConfirm = false
+        containerDataResignRequest = nil
         clearPendingMigrationConfirmation()
         DispatchQueue.main.async {
             self.presentMigrationConfirmation(
                 for: item,
                 destinationPath: destinationPath,
                 shouldResignAssociatedApp: shouldResign,
-                associatedApp: associatedApp
+                associatedApp: associatedApp,
+                approvedSandboxedTarget: approvedSandboxedTarget
             )
         }
     }
 
-    private func presentContainerDataResignConfirmation(for item: DataDirItem, associatedApp: AppItem?) {
-        let appName = associatedApp?.displayName ?? item.name
-        containerDataResignMessage = String(
-            format: "data_dir_resign_alert_message".localized,
-            appName,
-            appName
+    private func presentContainerDataResignConfirmation(for target: DataMigrationWorkflow.SigningTarget) {
+        let appName = target.url.lastPathComponent
+        let message = target.isSandboxed
+            ? String(format: "「%@」是沙盒应用。经典模式会先完整备份原应用，再重签并移除沙盒、应用组和钥匙串授权。在 macOS 27 上此应用可能无法打开；需要恢复时，先还原容器数据，再恢复原始签名。".localized, appName)
+            : String(format: "data_dir_resign_alert_message".localized, appName, appName)
+        let request = WarningSheetRequest(
+            title: target.isSandboxed ? "对沙盒应用重签名".localized : "data_dir_resign_alert_title".localized,
+            intro: message,
+            acknowledgementTitle: "我已了解以上风险".localized,
+            onCancel: { clearPendingMigrationConfirmation() },
+            actions: [
+                // 仅迁移不授予签名许可；重签名必须勾选确认并绑定当前真实应用。
+                WarningAction("data_dir_resign_alert_decline".localized) {
+                    pendingMigrationShouldResign = false
+                    pendingApprovedSandboxedTarget = nil
+                    continuePendingMigrationFlow()
+                },
+                WarningAction(target.isSandboxed ? "仍然重签名".localized : "data_dir_resign_alert_accept".localized, style: .destructive, requiresAcknowledgement: true) {
+                    pendingMigrationShouldResign = true
+                    pendingApprovedSandboxedTarget = target.isSandboxed ? target : nil
+                    continuePendingMigrationFlow()
+                }
+            ]
         )
+        // 这个弹窗总是紧跟在另一个弹窗之后出现，下一拍再开，避免同一帧内切换 sheet。
         DispatchQueue.main.async {
-            self.showContainerDataResignConfirm = true
+            self.containerDataResignRequest = request
         }
     }
 
@@ -1410,7 +1573,7 @@ struct DataDirsView: View {
         pendingMigrationDestinationPath = nil
         pendingMigrationShouldResign = nil
         pendingMigrationApp = nil
-        containerDataResignMessage = ""
+        pendingApprovedSandboxedTarget = nil
     }
 
     private func performRestore(_ item: DataDirItem) {
@@ -1578,6 +1741,477 @@ struct DataDirsView: View {
         }
     }
 
+    // MARK: - 挂载迁移（沙盒应用容器数据）
+
+    private func askMountMigrate(_ item: DataDirItem) {
+        // 直接从下载文件夹或安装包里打开时，macOS 把 AppPorts 放在退出即消失的临时路径上；
+        // 登录代理必须指向一个固定的程序，开机后才有人把卷挂回来。
+        if ContainerMountAgentInstaller.isRunningFromTemporaryLocation {
+            errorMessage = "AppPorts 当前从临时位置运行（直接从下载文件夹或安装包里打开时，macOS 会这样处理）。挂载迁移需要在每次登录后自动重新挂载，请先把 AppPorts 拖到「应用程序」文件夹，再从那里打开。".localized
+            showError = true
+            return
+        }
+        if let runningAppName = runningAssociatedAppName(for: item) {
+            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再迁移其数据目录。".localized, runningAppName)
+            showError = true
+            return
+        }
+        if !skipPermissionCheck && !hasAppManagementPermission() {
+            showPermissionAlert = true
+            return
+        }
+        guard !isCheckingMountDestination else { return }
+        isCheckingMountDestination = true
+        let destination = externalDriveURL
+        Task { @MainActor in
+            // 先只读检查目标盘（格式、加密、空间），再决定给确认框还是给引导。
+            let outcome = await MountMigrationPreflight().evaluate(destination: destination, dataBytes: item.sizeBytes)
+            isCheckingMountDestination = false
+            AppLogger.shared.logContext(
+                "挂载迁移前检查目标盘",
+                details: [
+                    ("item_name", item.name),
+                    ("external_root", destination?.path),
+                    ("outcome", String(describing: outcome))
+                ]
+            )
+            presentMountMigrationGuidance(for: item, destination: destination, outcome: outcome)
+        }
+    }
+
+    /// 按检查结果展示确认框或引导。只有「可以迁移」时才有「迁移数据」按钮。
+    private func presentMountMigrationGuidance(
+        for item: DataDirItem,
+        destination: URL?,
+        outcome: MountMigrationPreflight.Outcome
+    ) {
+        let guidance = MountMigrationGuidance.make(
+            outcome: outcome,
+            appName: selectedApp?.displayName ?? item.name,
+            dataSize: item.size,
+            sourcePath: item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"),
+            destinationPath: destination?.path
+        )
+        pendingMountMigrationItem = item
+        mountMigrationRequest = WarningSheetRequest(
+            title: guidance.title,
+            icon: guidance.icon,
+            tint: guidance.isReady ? .blue : .orange,
+            intro: guidance.intro,
+            bullets: guidance.bullets.map { WarningBullet($0.icon, $0.text) },
+            detail: guidance.detail,
+            cancelTitle: guidance.cancelTitle,
+            onCancel: { pendingMountMigrationItem = nil },
+            actions: guidance.actions.map { action in
+                WarningAction(action.title, style: action.isPrimary ? .preferred : .normal) {
+                    pendingMountMigrationItem = nil
+                    switch action.kind {
+                    case .migrate:
+                        performMountMigrate(item)
+                    case .chooseDestination:
+                        onSelectExternalDrive()
+                    case .openGuide(let page, let anchor):
+                        NSWorkspace.shared.open(DocumentationLink.url(page: page, anchor: anchor))
+                    case .recheck:
+                        askMountMigrate(item)
+                    }
+                }
+            }
+        )
+    }
+
+    private func performMountMigrate(_ item: DataDirItem) {
+        guard let dest = externalDriveURL else { return }
+        if let runningAppName = runningAssociatedAppName(for: item) {
+            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再迁移其数据目录。".localized, runningAppName)
+            showError = true
+            return
+        }
+        guard let operationToken = AppOperationState.shared.begin() else { return }
+        progressTitle = String(format: "正在挂载迁移「%@」".localized, item.name)
+        progressBytes = 0
+        progressTotalBytes = 0
+        progressFileName = ""
+        showProgress = true
+        let operationID = AppLogger.shared.makeOperationID(prefix: "view-container-mount-migrate")
+        let capturedApp = selectedApp
+        let appName = capturedApp?.displayName ?? item.name
+        let bundleID = capturedApp.flatMap { app in
+            (try? resolveRealAppURL(app)).flatMap { CodeSigner.bundleIdentifier(at: $0) }
+        }
+        AppLogger.shared.logContext(
+            "用户确认挂载迁移容器数据目录",
+            details: [
+                ("operation_id", operationID),
+                ("item_name", item.name),
+                ("type", item.type.rawValue),
+                ("source", item.path.path),
+                ("external_root", dest.path)
+            ] + appContextFields(for: capturedApp)
+        )
+
+        Task { @MainActor in
+            // 挂载代理也监听 /Volumes：等它跑完再动手，避免两边抢同一个挂载点。
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
+            defer {
+                showProgress = false
+                AppOperationState.shared.finish(operationToken)
+                if lockAcquired { operationLock.release() }
+            }
+            if !lockAcquired {
+                AppLogger.shared.logContext(
+                    "容器操作未取得跨进程锁",
+                    details: [("item_name", item.name), ("reason", "挂载代理正在运行")]
+                )
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
+            }
+            if let runningAppName = runningAssociatedAppName(for: item, associatedApp: capturedApp) {
+                errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再迁移其数据目录。".localized, runningAppName)
+                showError = true
+                return
+            }
+            let migrator = ContainerVolumeMigrator()
+            do {
+                let result = try await migrator.migrate(
+                    item: item,
+                    externalRootURL: dest,
+                    appName: appName,
+                    bundleIdentifier: bundleID
+                ) { progress in
+                    await MainActor.run {
+                        self.progressBytes = progress.copiedBytes
+                        self.progressTotalBytes = progress.totalBytes
+                        self.progressFileName = progress.currentFile
+                    }
+                }
+                AppLogger.shared.logContext(
+                    "挂载迁移成功",
+                    details: [("operation_id", operationID), ("item_name", item.name), ("volume", result.record.volumeName)]
+                )
+                await MainActor.run {
+                    self.reloadCurrentTab()
+                    self.presentCleanupWarning(result.cleanupWarning)
+                }
+            } catch {
+                AppLogger.shared.logError(
+                    "挂载迁移失败",
+                    error: error,
+                    errorCode: "CONTAINER-MOUNT-MIGRATE-FAILED",
+                    context: [("operation_id", operationID), ("item_name", item.name)],
+                    relatedURLs: [("source", item.path)]
+                )
+                await MainActor.run {
+                    self.reloadCurrentTab()
+                    self.errorMessage = error.localizedDescription
+                    self.showError = true
+                }
+            }
+        }
+    }
+
+    private func performMount(_ item: DataDirItem) {
+        guard let record = ContainerMountStore.shared.record(forMountPoint: item.path) else {
+            errorMessage = "找不到该目录的挂载记录".localized
+            showError = true
+            return
+        }
+        guard let operationToken = AppOperationState.shared.begin() else { return }
+        progressTitle = String(format: "正在挂载「%@」".localized, item.name)
+        progressBytes = 0
+        progressTotalBytes = 0
+        progressFileName = record.volumeName
+        showProgress = true
+        Task { @MainActor in
+            // 挂载代理也监听 /Volumes：等它跑完再动手，避免两边抢同一个挂载点。
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
+            defer {
+                showProgress = false
+                AppOperationState.shared.finish(operationToken)
+                if lockAcquired { operationLock.release() }
+            }
+            if !lockAcquired {
+                AppLogger.shared.logContext(
+                    "容器操作未取得跨进程锁",
+                    details: [("item_name", item.name), ("reason", "挂载代理正在运行")]
+                )
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
+            }
+            do {
+                try await ContainerVolumeMigrator().mount(record: record)
+                await MainActor.run { self.reloadCurrentTab() }
+            } catch {
+                AppLogger.shared.logError(
+                    "挂载容器卷失败",
+                    error: error,
+                    errorCode: "CONTAINER-MOUNT-FAILED",
+                    context: [("item_name", item.name), ("volume", record.volumeName)],
+                    relatedURLs: [("mount_point", item.path)]
+                )
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                    self.showError = true
+                }
+            }
+        }
+    }
+
+    private func performUnmount(_ item: DataDirItem) {
+        if let runningAppName = runningAssociatedAppName(for: item) {
+            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再卸载其数据卷。".localized, runningAppName)
+            showError = true
+            return
+        }
+        guard let record = ContainerMountStore.shared.record(forMountPoint: item.path) else {
+            errorMessage = "找不到该目录的挂载记录".localized
+            showError = true
+            return
+        }
+        guard let operationToken = AppOperationState.shared.begin() else { return }
+        progressTitle = String(format: "正在卸载「%@」".localized, item.name)
+        progressBytes = 0
+        progressTotalBytes = 0
+        progressFileName = record.volumeName
+        showProgress = true
+        let capturedApp = selectedApp
+        Task { @MainActor in
+            // 挂载代理也监听 /Volumes：等它跑完再动手，避免两边抢同一个挂载点。
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
+            defer {
+                showProgress = false
+                AppOperationState.shared.finish(operationToken)
+                if lockAcquired { operationLock.release() }
+            }
+            if !lockAcquired {
+                AppLogger.shared.logContext(
+                    "容器操作未取得跨进程锁",
+                    details: [("item_name", item.name), ("reason", "挂载代理正在运行")]
+                )
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
+            }
+            if let runningAppName = runningAssociatedAppName(for: item, associatedApp: capturedApp) {
+                errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再卸载其数据卷。".localized, runningAppName)
+                showError = true
+                return
+            }
+            do {
+                try await ContainerVolumeMigrator().unmount(record: record)
+                await MainActor.run { self.reloadCurrentTab() }
+            } catch {
+                AppLogger.shared.logError(
+                    "卸载容器卷失败",
+                    error: error,
+                    errorCode: "CONTAINER-UNMOUNT-FAILED",
+                    context: [("item_name", item.name), ("volume", record.volumeName)],
+                    relatedURLs: [("mount_point", item.path)]
+                )
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                    self.showError = true
+                }
+            }
+        }
+    }
+
+    private func askMountRestore(_ item: DataDirItem) {
+        if let runningAppName = runningAssociatedAppName(for: item) {
+            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再还原其数据目录。".localized, runningAppName)
+            showError = true
+            return
+        }
+        guard let record = ContainerMountStore.shared.record(forMountPoint: item.path) else {
+            errorMessage = "找不到该目录的挂载记录".localized
+            showError = true
+            return
+        }
+
+        confirmRequest = makeConfirmRequest(
+            title: "还原挂载迁移目录".localized,
+            actionTitle: "继续".localized,
+            message: String(
+                format: "将「%@」从外置卷复制回本地，然后删除外置卷「%@」。\n\n还原到：%@\n\n还原需要外部存储保持连接，完成后外置卷及其数据会被删除。".localized,
+                item.name,
+                record.volumeName,
+                item.path.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+            ),
+            action: { performMountRestore(item, record: record) }
+        )
+    }
+
+    private func performMountRestore(_ item: DataDirItem, record: ContainerMountRecord) {
+        if let runningAppName = runningAssociatedAppName(for: item) {
+            errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再还原其数据目录。".localized, runningAppName)
+            showError = true
+            return
+        }
+        guard let operationToken = AppOperationState.shared.begin() else { return }
+        progressTitle = String(format: "正在还原「%@」".localized, item.name)
+        progressBytes = 0
+        progressTotalBytes = 0
+        progressFileName = ""
+        showProgress = true
+        let operationID = AppLogger.shared.makeOperationID(prefix: "view-container-mount-restore")
+        let capturedApp = selectedApp
+        AppLogger.shared.logContext(
+            "用户确认还原挂载迁移目录",
+            details: [
+                ("operation_id", operationID),
+                ("item_name", item.name),
+                ("mount_point", item.path.path),
+                ("volume", record.volumeName)
+            ] + appContextFields()
+        )
+
+        Task { @MainActor in
+            // 挂载代理也监听 /Volumes：等它跑完再动手，避免两边抢同一个挂载点。
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
+            defer {
+                showProgress = false
+                AppOperationState.shared.finish(operationToken)
+                if lockAcquired { operationLock.release() }
+            }
+            if !lockAcquired {
+                AppLogger.shared.logContext(
+                    "容器操作未取得跨进程锁",
+                    details: [("item_name", item.name), ("reason", "挂载代理正在运行")]
+                )
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
+            }
+            if let runningAppName = runningAssociatedAppName(for: item, associatedApp: capturedApp) {
+                errorMessage = String(format: "「%@」正在运行中，请先关闭该应用后再还原其数据目录。".localized, runningAppName)
+                showError = true
+                return
+            }
+            do {
+                let warning = try await ContainerVolumeMigrator().restore(record: record, estimatedTotalBytes: item.sizeBytes) { progress in
+                    await MainActor.run {
+                        self.progressBytes = progress.copiedBytes
+                        self.progressTotalBytes = progress.totalBytes
+                        self.progressFileName = progress.currentFile
+                    }
+                }
+                AppLogger.shared.logContext(
+                    "挂载迁移目录还原成功",
+                    details: [("operation_id", operationID), ("item_name", item.name)]
+                )
+                await MainActor.run {
+                    self.reloadCurrentTab()
+                    self.presentCleanupWarning(warning)
+                }
+            } catch {
+                AppLogger.shared.logError(
+                    "挂载迁移目录还原失败",
+                    error: error,
+                    errorCode: "CONTAINER-MOUNT-RESTORE-FAILED",
+                    context: [("operation_id", operationID), ("item_name", item.name)],
+                    relatedURLs: [("mount_point", item.path)]
+                )
+                await MainActor.run {
+                    self.reloadCurrentTab()
+                    self.errorMessage = error.localizedDescription
+                    self.showError = true
+                }
+            }
+        }
+    }
+
+    private func presentCleanupWarning(_ warning: ContainerVolumeMigrator.CleanupWarning?) {
+        guard let warning else { return }
+        cleanupWarning = warning
+        showCleanupWarning = true
+    }
+
+    private func presentPendingCleanup(_ cleanup: ContainerCleanupRecord) {
+        // 中断的还原仍有暂存副本，不能把它当成已完成后仅需删卷的记录。
+        if let staging = cleanup.restoreStagingPath,
+           FileManager.default.fileExists(atPath: staging) {
+            errorMessage = String(
+                format: "还原未完成，已复制的本地数据保留在「%@」，外置卷也已保留。请检查迁移记录和挂载状态后重试。%@".localized,
+                staging, ""
+            )
+            showError = true
+            return
+        }
+        let warning = cleanupWarning?.cleanup.id == cleanup.id
+            ? cleanupWarning
+            : ContainerVolumeMigrator.CleanupWarning(cleanup: cleanup, details: "")
+        presentCleanupWarning(warning)
+    }
+
+    private func retryCleanup(_ warning: ContainerVolumeMigrator.CleanupWarning) {
+        guard let token = AppOperationState.shared.begin() else { return }
+        showProgress = true
+        progressTitle = "重试清理".localized
+        progressBytes = 0
+        progressTotalBytes = 0
+        progressFileName = ""
+        Task { @MainActor in
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
+            defer {
+                showProgress = false
+                AppOperationState.shared.finish(token)
+                if lockAcquired { operationLock.release() }
+            }
+            if !lockAcquired {
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
+            }
+            let nextWarning = await ContainerVolumeMigrator().retryCleanup(warning)
+            reloadCurrentTab()
+            cleanupWarning = nextWarning
+            presentCleanupWarning(nextWarning)
+        }
+    }
+
+    private func confirmDiscardCleanupRecord(_ cleanup: ContainerCleanupRecord) {
+        DispatchQueue.main.async {
+            confirmRequest = makeConfirmRequest(
+                title: "仅移除清理记录".localized,
+                actionTitle: "确认".localized,
+                message: "仅移除这条清理记录，不会删除本地备份或外置卷，也不会重新挂载。若副本仍存在，需要你自行清理。确定继续吗？".localized,
+                action: { discardCleanupRecord(cleanup) }
+            )
+        }
+    }
+
+    private func discardCleanupRecord(_ cleanup: ContainerCleanupRecord) {
+        guard let token = AppOperationState.shared.begin() else { return }
+        Task { @MainActor in
+            let operationLock = OperationLock()
+            let lockAcquired = await operationLock.acquire(timeout: OperationLock.appWaitTimeout)
+            defer {
+                AppOperationState.shared.finish(token)
+                if lockAcquired { operationLock.release() }
+            }
+            if !lockAcquired {
+                errorMessage = "后台正在连接外部存储，本次操作尚未开始。请稍后重试。".localized
+                showError = true
+                return
+            }
+            do {
+                try await ContainerVolumeMigrator().discardCleanupRecord(cleanup)
+                cleanupWarning = nil
+                reloadCurrentTab()
+            } catch {
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
+    }
+
     private func suggestedDestinationPath(for item: DataDirItem, under externalRoot: URL) -> URL {
         guard item.type != .dotFolder else {
             return externalRoot.appendingPathComponent(item.type.rawValue).appendingPathComponent(item.path.lastPathComponent)
@@ -1618,7 +2252,7 @@ struct DataDirsView: View {
     private func clearManagedLinkNormalizationState() {
         managedLinkNormalizationItem = nil
         managedLinkNormalizationCurrentTarget = nil
-        managedLinkNormalizationMessage = ""
+        managedLinkNormalizationRequest = nil
     }
 
     // MARK: - 权限与运行检查
@@ -1845,6 +2479,11 @@ struct TreeItemView: View {
     let onManageExistingLink: (DataDirItem) -> Void
     let onNormalizeManagedLink: (DataDirItem) -> Void
     let onRelinkExternalData: (DataDirItem) -> Void
+    var onMountMigrate: ((DataDirItem) -> Void)? = nil
+    var onMount: ((DataDirItem) -> Void)? = nil
+    var onUnmount: ((DataDirItem) -> Void)? = nil
+    var onMountRestore: ((DataDirItem) -> Void)? = nil
+    var classicModeActive: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1856,7 +2495,12 @@ struct TreeItemView: View {
                 onRestore: onRestore,
                 onManageExistingLink: onManageExistingLink,
                 onNormalizeManagedLink: onNormalizeManagedLink,
-                onRelinkExternalData: onRelinkExternalData
+                onRelinkExternalData: onRelinkExternalData,
+                onMountMigrate: onMountMigrate,
+                onMount: onMount,
+                onUnmount: onUnmount,
+                onMountRestore: onMountRestore,
+                classicModeActive: classicModeActive
             )
             .onTapGesture { onSelect(item.id) }
 
@@ -1870,7 +2514,12 @@ struct TreeItemView: View {
                     onRestore: onRestore,
                     onManageExistingLink: onManageExistingLink,
                     onNormalizeManagedLink: onNormalizeManagedLink,
-                    onRelinkExternalData: onRelinkExternalData
+                    onRelinkExternalData: onRelinkExternalData,
+                    onMountMigrate: onMountMigrate,
+                    onMount: onMount,
+                    onUnmount: onUnmount,
+                    onMountRestore: onMountRestore,
+                    classicModeActive: classicModeActive
                 )
             }
         }
@@ -1889,6 +2538,11 @@ struct DataDirGroupCard: View {
     let onManageExistingLink: (DataDirItem) -> Void
     let onNormalizeManagedLink: (DataDirItem) -> Void
     let onRelinkExternalData: (DataDirItem) -> Void
+    var onMountMigrate: ((DataDirItem) -> Void)? = nil
+    var onMount: ((DataDirItem) -> Void)? = nil
+    var onUnmount: ((DataDirItem) -> Void)? = nil
+    var onMountRestore: ((DataDirItem) -> Void)? = nil
+    var classicModeActive: Bool = false
 
     @State private var isCollapsed = false
 
@@ -1949,7 +2603,12 @@ struct DataDirGroupCard: View {
                             onRestore: onRestore,
                             onManageExistingLink: onManageExistingLink,
                             onNormalizeManagedLink: onNormalizeManagedLink,
-                            onRelinkExternalData: onRelinkExternalData
+                            onRelinkExternalData: onRelinkExternalData,
+                            onMountMigrate: onMountMigrate,
+                            onMount: onMount,
+                            onUnmount: onUnmount,
+                            onMountRestore: onMountRestore,
+                            classicModeActive: classicModeActive
                         )
                     }
                 }

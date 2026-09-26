@@ -53,6 +53,8 @@ private func localizedStatusBadgeText(_ text: String) -> String {
         return "商店".localized
     case "已重签名":
         return "已重签名".localized
+    case "签名已替换":
+        return "签名已替换".localized
     default:
         return text
     }
@@ -61,6 +63,8 @@ private func localizedStatusBadgeText(_ text: String) -> String {
 struct StatusBadge: View {
     /// 应用项目数据
     let app: AppItem
+    /// 签名被替换时的修复入口：给了回调就点开修复面板，没给就只是个静态徽章。
+    var onRepairSignature: ((AppItem) -> Void)? = nil
 
     /// 所有适用的标签列表
     private var badges: [BadgeConfig] {
@@ -226,6 +230,8 @@ struct StatusBadge: View {
                 .font(.system(size: 9, weight: .bold))
             Text(localizedStatusBadgeText(badge.text))
                 .font(.system(size: 10, weight: .medium, design: .rounded))
+                .lineLimit(1)
+                .fixedSize()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -247,23 +253,32 @@ struct StatusBadge: View {
                 }
             }
 
-            if app.isResigned {
+            if app.signatureReplaced {
+                // 徽章本身就是入口：点它直接打开修复面板，不用去右键菜单里翻。
+                TappableBadge(
+                    badge: BadgeConfig(text: "签名已替换", icon: "exclamationmark.shield.fill", color: .red, isTappable: true),
+                    action: onRepairSignature.map { handler in { handler(app) } }
+                )
+            } else if app.isResigned {
                 badgeView(for: BadgeConfig(text: "已重签名", icon: "seal.fill", color: .teal, isTappable: false))
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            (app.isResigned ? "已重签名".localized + ", " : "") +
+            (app.signatureReplaced ? "签名已替换".localized + ", " : (app.isResigned ? "已重签名".localized + ", " : "")) +
             badges.map { localizedStatusBadgeText($0.text) }.joined(separator: ", ")
         )
         .accessibilityAddTraits(.isStaticText)
     }
 }
 
-/// 可点击标签（独立 popover，避免 race condition）
+/// 可点击标签：有 `action` 就执行动作，否则弹一段说明（独立 popover，避免 race condition）
 private struct TappableBadge: View {
     let badge: BadgeConfig
-    let message: String
+    /// 点击后弹的说明；给 `action` 时不用传。
+    var message: String? = nil
+    /// 点击后执行的动作，优先级高于 `message`。
+    var action: (() -> Void)? = nil
     @State private var isPresented = false
 
     var body: some View {
@@ -272,6 +287,8 @@ private struct TappableBadge: View {
                 .font(.system(size: 9, weight: .bold))
             Text(localizedStatusBadgeText(badge.text))
                 .font(.system(size: 10, weight: .medium, design: .rounded))
+                .lineLimit(1)
+                .fixedSize()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
@@ -281,9 +298,16 @@ private struct TappableBadge: View {
         .overlay(
             Capsule().stroke(badge.color.opacity(0.2), lineWidth: 0.5)
         )
-        .onTapGesture { isPresented = true }
+        .onTapGesture {
+            if let action {
+                action()
+            } else {
+                isPresented = true
+            }
+        }
+        .help(action == nil ? (message ?? "") : "查看修复步骤".localized)
         .popover(isPresented: $isPresented) {
-            Text(message)
+            Text(message ?? "")
                 .font(.system(size: 12))
                 .padding(12)
                 .frame(maxWidth: 300)

@@ -20,6 +20,8 @@ struct AppRowView: View {
     let onRestoreSignature: ((AppItem) -> Void)?
     var onMoveOutWholeSymlink: ((AppItem) -> Void)? = nil
     var onRepairDock: ((AppItem) -> Void)? = nil
+    /// 签名被替换的应用：打开修复面板
+    var onRepairSignature: ((AppItem) -> Void)? = nil
     
     @State private var isHovered = false
     
@@ -35,17 +37,21 @@ struct AppRowView: View {
                     .truncationMode(.tail)
                 
                 HStack(spacing: 8) {
-                    StatusBadge(app: app)
+                    StatusBadge(app: app, onRepairSignature: onRepairSignature)
                     
                     if let size = app.size {
                         Text(size)
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
                             .transition(.opacity)
                     } else {
                         Text("计算中...".localized)
                             .font(.system(size: 10))
                             .foregroundColor(.secondary.opacity(0.5))
+                            .lineLimit(1)
+                            .fixedSize()
                             .transition(.opacity)
                     }
                 }
@@ -58,6 +64,28 @@ struct AppRowView: View {
             )
             
             Spacer()
+
+            // 签名被替换的应用：把修复入口直接摆在行末。多数用户不会去右键菜单里找。
+            if app.signatureReplaced, let onRepairSignature {
+                Button(action: { onRepairSignature(app) }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "wrench.and.screwdriver.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("修复".localized)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.red)
+                    .clipShape(Capsule())
+                    .lineLimit(1)
+                    .fixedSize()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("查看修复步骤".localized)
+                .help("查看修复步骤".localized)
+            }
             
             if showDeleteLinkButton && (app.status == AppStatus.linked || app.status == AppStatus.orphanedLink) {
                 Button(action: { onDeleteLink(app) }) {
@@ -126,9 +154,17 @@ struct AppRowView: View {
                 }
             }
 
-            // 数据目录迁移后，即使应用仍在本地，也需要能够重试签名。
+            if app.signatureReplaced, let onRepairSignature {
+                Divider()
+                Button("查看修复步骤".localized) {
+                    onRepairSignature(app)
+                }
+            }
+
+            // 应用本体迁移后弹「已损坏」时的兜底；签名已被替换的应用再签只会更糟，不提供。
             if !app.isFolder,
                !app.isSystemApp,
+               !app.signatureReplaced,
                app.status != AppStatus.orphanedLink,
                app.displayURL.pathExtension.lowercased() == "app",
                let onResign {
