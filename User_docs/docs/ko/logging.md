@@ -32,9 +32,9 @@ AppPorts에는 앱 런타임 중 핵심 이벤트, 마이그레이션 작업, �
 | 프로세서 정보 | 브랜드 문자열, 코어 수, 활성 코어 수 |
 | 물리적 메모리 | 총 메모리 |
 
-### 외장 저장소 정보
+### 외장 저장 장치 정보
 
-외장 저장소 볼륨을 선택할 때 기록됩니다:
+외장 저장 장치 볼륨을 선택할 때 기록됩니다:
 
 | 항목 | 설명 |
 |------|------|
@@ -86,9 +86,16 @@ AppPorts에는 앱 런타임 중 핵심 이벤트, 마이그레이션 작업, �
 | 오류 코드 | 의미 |
 |----------|------|
 | `BACKUP-SIGNATURE-FAILED` | 서명 백업 실패 |
-| `RESIGN-FAILED` | 재서명 실패 (앱이 macOS 서명 검증을 통과하지 못할 수 있음) |
+| `APP-MOVE-DESTINATION-CONFLICT` | 앱 마이그레이션 대상이 이미 존재하며 안전하게 교체할 수 있는지 확인할 수 없음 |
+| `APP-RESTORE-LOCAL-CONFLICT` | Mac으로 되돌리는 중 자동으로 덮어쓸 수 없는 같은 이름의 로컬 항목 발견 |
+| `DATA-MIGRATE-DESTINATION-CONFLICT` | 데이터 디렉토리 마이그레이션 대상이 이미 존재하며 메타데이터가 완전히 일치하지 않음 |
+| `RESIGN-FAILED` | 재서명 실패. 앱이 macOS 서명 검증을 통과하지 못할 수 있음 |
 | `DATA-RESIGN-FAILED` | 데이터 디렉토리 마이그레이션 후 자동 재서명 실패 |
-| `DATA-BACKUP-SIGNATURE-FAILED` | 데이터 디렉토리 마이그레이션 전 서명 백업 실패 (이후 서명 복원 시 원본 서명을 사용할 수 없음) |
+| `RESIGN-REFUSED-SANDBOXED` | 샌드박스 앱 재서명 거부 |
+| `RESTORE-SIGNATURE-IDENTITY-UNAVAILABLE` | 이 Mac에 원래 서명 인증서가 없어 복원 거부 |
+| `CONTAINER-MOUNT-*` | `CONTAINER-MOUNT-EXTERNAL-NOT-APFS`, `CONTAINER-MOUNT-SWITCH-FAILED` 등 마운트 마이그레이션 단계별 실패 |
+| `CONTAINER-RESTORE-*` | 마운트 마이그레이션한 디렉토리를 복원하는 단계별 실패 |
+| `DATA-BACKUP-SIGNATURE-FAILED` | 데이터 디렉토리 마이그레이션 전 서명 백업 실패. 이후 서명 복원 시 원래 신원을 사용할 수 없음 |
 
 ### 데이터 디렉토리 작업 컨텍스트
 
@@ -97,7 +104,7 @@ AppPorts에는 앱 런타임 중 핵심 이벤트, 마이그레이션 작업, �
 | 필드 | 설명 |
 |------|------|
 | `app_name` | 관련 앱 이름 |
-| `app_status` | 앱 상태 (Linked, Local 등) |
+| `app_status` | 앱 상태 (연결됨, 로컬 등) |
 | `app_is_resigned` | 앱이 재서명되었는지 여부 |
 | `app_bundle_id` | 앱의 Bundle ID (실제 경로에서 읽음) |
 | `app_real_path` | 앱의 실제 외부 경로 |
@@ -127,15 +134,15 @@ AppPorts에는 앱 런타임 중 핵심 이벤트, 마이그레이션 작업, �
 
 다음을 통해 사용자 정의할 수 있습니다:
 
-- 메뉴바 → 로그 → 로그 위치 설정
-- 설정 → 로깅 설정 → 사용자 정의 경로
+- 메뉴바 → 로그 → 로그 위치 설정...
+- 설정 → 로그 설정 → 사용자 정의 경로
 
 ### 로그 형식
 
 ```text
-[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] App started
+[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] 应用启动
 [2026-05-08 09:30:01] [DIAG] [session:a1b2c3d4] [pid:12345]   app_version: 1.6.1 (123)
-[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   Migration complete: 2.3 GB, 45.2 MB/s, 52.1s
+[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   迁移完成: 2.3 GB, 45.2 MB/s, 52.1s
 ```
 
 ### 로그 레벨
@@ -145,7 +152,7 @@ AppPorts에는 앱 런타임 중 핵심 이벤트, 마이그레이션 작업, �
 | `INFO` | 일반 정보 |
 | `ERROR` | 오류 정보 (구조화된 오류 세부 사항 포함) |
 | `DIAG` | 시스템 진단 정보 |
-| `DISK` | 외장 저장소 볼륨 정보 |
+| `DISK` | 외장 저장 장치 볼륨 정보 |
 | `PERF` | 마이그레이션 성능 보고서 |
 | `TRACE` | 하위 수준 경로 상태 및 폴더 모니터링 |
 | `DEBUG` | 디버그 정보 (크기 계산, 중첩 디렉토리 검사) |
@@ -171,13 +178,13 @@ AppPorts에는 앱 런타임 중 핵심 이벤트, 마이그레이션 작업, �
 **방법 2: 설정 페이지**
 
 1. AppPorts → 설정 (오른쪽 상단)을 엽니다
-2. "로깅 설정" 섹션을 찾습니다
+2. "로그 설정" 섹션을 찾습니다
 3. "진단 패키지 내보내기" 버튼을 클릭합니다
 4. 저장 위치를 선택합니다
 
 ### 진단 패키지 내용
 
-내보낸 `AppPorts-Diagnostic-<datetime>.zip`에는 다음이 포함됩니다:
+내보낸 `AppPorts-Diagnostic-<日期时间>.zip`에는 다음이 포함됩니다:
 
 | 파일 | 형식 | 설명 |
 |------|------|------|
@@ -194,7 +201,7 @@ AppPorts에는 앱 런타임 중 핵심 이벤트, 마이그레이션 작업, �
 | 원본 내용 | 대체 내용 |
 |----------|----------|
 | 사용자 홈 디렉토리 경로 (예: `/Users/john`) | `/Users/<redacted-user>` |
-| 외장 저장소 볼륨 이름 (예: `/Volumes/MyDrive`) | `/Volumes/<redacted-volume>` |
+| 외장 저장 장치 볼륨 이름 (예: `/Volumes/MyDrive`) | `/Volumes/<redacted-volume>` |
 | `$HOME` 전체 경로 | `~` |
 
 ## Issues 제출
