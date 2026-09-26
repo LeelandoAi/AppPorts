@@ -91,6 +91,10 @@ AppPorts 内置日志系统，用于记录应用运行期间的关键事件、�
 | `DATA-MIGRATE-DESTINATION-CONFLICT` | 数据目录迁移目标已存在，且 metadata 未完整匹配 |
 | `RESIGN-FAILED` | 重签名失败（应用可能无法通过 macOS 签名校验） |
 | `DATA-RESIGN-FAILED` | 数据目录迁移后自动重签名失败 |
+| `RESIGN-REFUSED-SANDBOXED` | 拒绝对沙盒应用重签名 |
+| `RESTORE-SIGNATURE-IDENTITY-UNAVAILABLE` | 原始签名证书不在本机，拒绝恢复 |
+| `CONTAINER-MOUNT-*` | 挂载迁移各阶段失败，如 `CONTAINER-MOUNT-EXTERNAL-NOT-APFS`、`CONTAINER-MOUNT-SWITCH-FAILED` |
+| `CONTAINER-RESTORE-*` | 挂载迁移目录还原各阶段失败 |
 | `DATA-BACKUP-SIGNATURE-FAILED` | 数据目录迁移前签名备份失败（后续恢复签名将无法使用原始身份） |
 
 ### 数据目录操作上下文

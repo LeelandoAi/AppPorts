@@ -20,7 +20,8 @@ outline: deep
 | 功能 | macOS 12.0 - 15.0 | macOS 15.1+ |
 |------|:---:|:---:|
 | 应用迁移（Stub Portal） | ✓ | ✓ |
-| 数据目录迁移 | ✓ | ✓ |
+| 数据目录迁移（符号链接） | ✓ | ✓ |
+| 容器数据挂载迁移 | ✓（挂载需输入管理员密码） | ✓（27 实测无需密码；13 至 26 未逐一验证） |
 | 目录迁移（自定义文件夹） | ✓ | ✓ |
 | 代码签名管理 | ✓ | ✓ |
 | App Store 应用迁移到外部存储 | ✗ | ✓ |
@@ -58,31 +59,27 @@ App Store 应用或 root 所有的应用可能因 macOS 权限无法由 AppPorts
 
 ### 按数据目录类型
 
-| 数据目录类型 | 迁移 | 风险 |
+| 数据目录类型 | 迁移方式 | 风险 |
 |-------------|:---:|------|
-| `~/Library/Application Support/` | ✓ | 中 — 应用可能使用文件锁或 SQLite WAL 日志 |
-| `~/Library/Preferences/` | ✓ | 低-中 — `cfprefsd` 缓存可能导致读取到过期配置 |
-| `~/Library/Containers/` | ✓ | 中 — 同一 Team 下的多个应用可能共享数据 |
-| `~/Library/Group Containers/` | ✓ | 中 — 共享数据可能影响同一 Team 下的其他应用 |
-| `~/Library/Caches/` | ✓ | 低 — 缓存可重建 |
-| `~/Library/Logs/` | ✓ | 低 — 仅日志文件 |
-| `~/Library/WebKit/` | ✓ | 中 — WebKit 本地存储 |
-| `~/Library/HTTPStorages/` | ✓ | 低 — 网络会话存储 |
-| `~/Library/Application Scripts/` | ✓ | 低 — 扩展脚本 |
-| `~/Library/Saved Application State/` | ✓ | 低 — 窗口状态恢复 |
-| `~/.npm`、`~/.m2` 等 dot-folder | ✓ | 低 — 开发工具缓存 |
-| 用户主目录下的自定义文件夹 | ✓ | 视内容而定 — 迁移前应关闭正在写入的应用或工具 |
+| `~/Library/Application Support/` | 符号链接 | 中 — 应用可能使用文件锁或 SQLite WAL 日志 |
+| `~/Library/Preferences/` | 符号链接 | 低-中 — `cfprefsd` 缓存可能导致读取到过期配置 |
+| `~/Library/Containers/` | 挂载 | 中 — 需要未加密的 APFS 外置盘；首次打开应用需允许授权框；打开前先插盘 |
+| `~/Library/Group Containers/` | 挂载 | 中 — 同上；共享数据会影响同一 Team 下的其他应用 |
+| `~/Library/Caches/` | 符号链接 | 低 — 缓存可重建 |
+| `~/Library/Logs/` | 符号链接 | 低 — 仅日志文件 |
+| `~/Library/WebKit/` | 符号链接 | 中 — WebKit 本地存储 |
+| `~/Library/HTTPStorages/` | 符号链接 | 低 — 网络会话存储 |
+| `~/Library/Application Scripts/` | 符号链接 | 低 — 扩展脚本 |
+| `~/Library/Saved Application State/` | 符号链接 | 低 — 窗口状态恢复 |
+| `~/.npm`、`~/.m2` 等 dot-folder | 符号链接 | 低 — 开发工具缓存 |
+| 用户主目录下的自定义文件夹 | 符号链接 | 视内容而定 — 迁移前应关闭正在写入的应用或工具 |
 
 ::: warning 高价值数据目录
 微信聊天记录、虚拟机镜像、游戏库、数据库、模型缓存等目录通常体积大、写入频繁，且对路径和文件锁较敏感。迁移前建议先做独立备份；迁移后如应用提示数据异常，应优先恢复到本地再排查。
 :::
 
-::: warning 迁移容器数据后不要依赖「重签名」
-`~/Library/Containers/` 与 `~/Library/Group Containers/` 属于沙盒容器。对这类应用的关联应用执行 Ad-hoc 重签名，会抹掉 `app-sandbox`、`application-groups`、`keychain-access-groups` 等授权以及 Team ID；当原始开发者证书不在本机钥匙串时，这些内容无法还原。
-
-重签名后应用可能仍然正常使用数周甚至数月，但在后续 macOS 大版本升级后，可能突然无法访问自己的容器数据，表现为双击无反应、进程秒退。迁回数据与再次重签名都无法修复。
-
-判断方法与修复步骤见[容器数据与签名身份](/datamigrae/container-identity)。
+::: warning 容器数据只能挂载迁移
+`~/Library/Containers/` 与 `~/Library/Group Containers/` 里的数据用符号链接搬走后沙盒应用读不到；旧版本靠重签名绕过，代价是应用在 macOS 27 上可能无法打开。1.8.2 起这两类目录只提供[挂载迁移](/datamigrae/mount-migration)，并对沙盒应用一律拒绝重签名。来龙去脉见[容器数据、沙盒与签名身份](/datamigrae/container-identity)。
 :::
 
 ::: warning 自定义目录范围
@@ -113,15 +110,17 @@ App Store 应用或 root 所有的应用可能因 macOS 权限无法由 AppPorts
 
 | 要求 | 说明 |
 |------|------|
-| 文件系统 | 支持 APFS、HFS+ 和 exFAT |
+| 文件系统 | 应用本体和普通数据目录：APFS、HFS+、exFAT 均可。**容器数据：仅 APFS** |
 | 最小空间 | 视迁移应用大小而定 |
 | 接口 | USB、Thunderbolt、NVMe 均支持 |
 | 保持连接 | 迁移后外部存储需保持连接，否则相关应用无法启动 |
 
 ::: tip 文件系统建议
-- **APFS**：推荐，支持克隆、快照，性能最佳
-- **HFS+**：兼容性好，适合旧款 Mac
-- **exFAT**：跨平台兼容，但不支持硬链接和克隆
+- **APFS**：推荐。唯一支持容器数据挂载迁移的格式，性能也最好
+- **HFS+**：兼容旧款 Mac，不能迁移容器数据
+- **exFAT**：跨平台，不能迁移容器数据；要和 Windows 共用时可以使用独立的 APFS 分区。若 exFAT 占满整块盘，系统自带工具不能直接缩小它，需先备份再重新分区；已有未分配空间时可按[分区条件](/why-apfs#prepare-apfs)新建 APFS 分区
+
+为什么容器数据只能用 APFS，以及我们试过的替代方案，见[为什么外置盘必须是 APFS](/why-apfs)。
 :::
 
 ### 网络挂载盘

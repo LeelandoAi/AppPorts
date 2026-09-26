@@ -27,7 +27,7 @@ features:
     details: "自动识别 Sparkle、Electron 等自更新应用，提供「锁定迁移」选项；本地新版高于外部旧副本时，会标记为「待迁出」。"
   - icon: 📦
     title: "数据目录管理"
-    details: "支持将 ~/Library/ 子目录、~/.npm 等数据目录迁移至外部存储，提供树形视图、重签名确认与 metadata 恢复校验。"
+    details: "支持将 ~/Library/ 子目录、~/.npm 等数据目录迁移至外部存储；沙盒容器数据（如微信聊天记录）通过挂载迁移放到 APFS 外置盘，签名不动。"
 ---
 
 <script setup lang="ts">
