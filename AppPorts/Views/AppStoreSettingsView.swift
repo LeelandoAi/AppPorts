@@ -48,36 +48,74 @@ struct AppStoreSettingsView: View {
     /// 最大日志文件大小（字节）
     @AppStorage("MaxLogSizeBytes") private var maxLogSize = 2 * 1024 * 1024
     
-    /// 是否启用开机自动重签名（默认开启）
-    @AppStorage("autoResignAtLogin") private var autoResignAtLogin = true
+    /// 是否启用开机自动重签名。新安装默认关闭；已经装过登录代理的老用户保持开启。
+    @AppStorage("autoResignAtLogin") private var autoResignAtLogin = AutoResignInstaller.isInstalled
+
+    /// 经典数据迁移模式：容器目录允许符号链接迁移、沙盒应用允许重签名。默认关闭。
+    @AppStorage(MigrationPreferences.classicDataMigrationKey) private var classicDataMigrationEnabled = false
+    @State private var showClassicModeAcknowledgement = false
+    @State private var classicModeAcknowledged = false
+
+    /// 准备情况检查面板
+    @State private var showReadinessCheck = false
 
     /// 环境变量：用于关闭弹窗
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var operationState = AppOperationState.shared
 
     private var isMASExternalSupported: Bool { AppMigrationService.isMASExternalInstallSupported }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            // 标题栏
-            HStack {
-                Image(systemName: "app.badge.checkmark")
-                    .font(.title2)
-                    .foregroundColor(.blue)
-                Text("设置".localized)
-                    .font(.title2.bold())
+        VStack(alignment: .leading, spacing: 0) {
+            settingsHeader
 
-                Spacer()
+            Divider()
 
-                // 关闭按钮
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("关闭".localized)
+            // 正文放进 ScrollView：设置项比窗口高时不再把表头（含关闭按钮）顶出可视区域。
+            ScrollView(.vertical) {
+                settingsContent
             }
-            .padding(.bottom, 8)
+            .frame(minHeight: 320)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .frame(minWidth: 420, idealWidth: 520, maxWidth: 520)
+        .sheet(isPresented: $showReadinessCheck) {
+            ReadinessCheckSheet()
+        }
+        .sheet(isPresented: $showClassicModeAcknowledgement) {
+            classicModeAcknowledgementSheet
+        }
+    }
+
+    /// 固定表头：不随正文滚动，关闭按钮任何时候都点得到。
+    private var settingsHeader: some View {
+        HStack {
+            Image(systemName: "app.badge.checkmark")
+                .font(.title2)
+                .foregroundColor(.blue)
+            Text("设置".localized)
+                .font(.title2.bold())
+
+            Spacer()
+
+            // 关闭按钮，Esc 也能关
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .help("关闭".localized)
+        }
+        .padding(.bottom, 12)
+    }
+
+    /// 可滚动的设置正文。
+    private var settingsContent: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            readinessSection
 
             if isMASExternalSupported {
                 // macOS 15.1+：自动启用，显示说明
@@ -244,7 +282,7 @@ struct AppStoreSettingsView: View {
                             Text("开机自动重签名".localized)
                                 .font(.headline)
                         }
-                        Text("macOS 重启后 Gatekeeper 可能使 Ad-hoc 签名失效。开启后每次登录自动对已迁移应用重新签名。".localized)
+                        Text("登录时仅检查旧版签名记录。完整备份由 AppPorts 安全处理，请在应用内手动重签。手动签名或恢复会停止本次登录的后台任务，下次登录仍按此设置运行。".localized)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -255,6 +293,7 @@ struct AppStoreSettingsView: View {
                     Toggle("开机自动重签名".localized, isOn: $autoResignAtLogin)
                         .toggleStyle(.switch)
                         .labelsHidden()
+                        .disabled(operationState.isBusy)
                         .onChange(of: autoResignAtLogin) { enabled in
                             if enabled {
                                 do {
@@ -277,7 +316,7 @@ struct AppStoreSettingsView: View {
             .background(Color.primary.opacity(0.03))
             .cornerRadius(12)
 
-            Spacer()
+            classicModeSection
 
             // 底部说明
             HStack {
@@ -288,8 +327,137 @@ struct AppStoreSettingsView: View {
                     .foregroundColor(.secondary)
             }
         }
+        .padding(.top, 20)
+    }
+
+    // MARK: - 准备情况
+
+    /// 权限与外部存储格式的检查入口。欢迎屏只在首次走一遍，之后都从这里进。
+    private var readinessSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.shield")
+                            .foregroundColor(.blue)
+                        Text("准备情况".localized)
+                            .font(.headline)
+                    }
+                    Text("检查迁移所需的权限与外部存储格式".localized)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Button("检查".localized) {
+                    showReadinessCheck = true
+                }
+            }
+        }
+        .padding()
+        .background(Color.primary.opacity(0.03))
+        .cornerRadius(12)
+    }
+
+    // MARK: - 经典数据迁移模式
+
+    private var classicModeSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .foregroundColor(.red)
+                        Text("经典数据迁移模式（不推荐）".localized)
+                            .font(.headline)
+                    }
+                    Text(!MigrationPreferences.isMacOS27OrLater
+                         ? "容器数据改回符号链接迁移，并允许对沙盒应用重签名。只适合暂不升级 macOS 27 且外置盘不是 APFS 的用户。".localized
+                         : "在 macOS 27 上，被重签名的沙盒应用可能无法打开。仍可开启，但推荐挂载迁移。".localized)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Toggle("经典数据迁移模式（不推荐）".localized, isOn: Binding(
+                    get: { classicDataMigrationEnabled && MigrationPreferences.isClassicModeSupported },
+                    set: { enabled in
+                        if enabled {
+                            classicModeAcknowledged = false
+                            showClassicModeAcknowledgement = true
+                        } else {
+                            classicDataMigrationEnabled = false
+                            AppLogger.shared.log("经典数据迁移模式已关闭")
+                        }
+                    }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .disabled(!MigrationPreferences.isClassicModeSupported)
+            }
+
+            if classicDataMigrationEnabled && MigrationPreferences.isClassicModeSupported {
+                WarningBanner(
+                    icon: "exclamationmark.triangle.fill",
+                    color: .red,
+                    text: "经典模式下迁移过容器数据并重签名的应用，升级 macOS 27 前应先还原容器数据，再恢复原始签名或重装。请先处理应用列表中带「签名已替换」标记的应用。".localized
+                )
+            }
+        }
+        .padding()
+        .background(Color.primary.opacity(0.03))
+        .cornerRadius(12)
+    }
+
+    private var classicModeAcknowledgementSheet: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.red)
+                    .font(.title2)
+                Text("开启经典数据迁移模式前请确认".localized)
+                    .font(.title3.bold())
+            }
+
+            Text("经典模式会恢复 AppPorts 1.8.1 及以前的做法，包括它已知的风险：".localized)
+                .font(.callout)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("容器目录（微信聊天记录等）用符号链接迁移；沙盒应用必须重签名才能读到数据。".localized, systemImage: "link")
+                Label("重签名会移除应用的沙盒、应用组和钥匙串授权。新版会先完整备份原应用，以便恢复；旧版仅记录签名身份的备份无法直接恢复。".localized, systemImage: "seal")
+                Label("升级到 macOS 27 后，被重签名的沙盒应用可能双击秒退，需要先还原容器数据，再恢复原始签名或重装。".localized, systemImage: "xmark.octagon")
+                Label("推荐做法是把外置盘格式化成 APFS 并使用挂载迁移，签名不需要任何改动。".localized, systemImage: "checkmark.shield")
+            }
+            .font(.callout)
+            .foregroundColor(.secondary)
+
+            Link("查看完整说明".localized, destination: DocumentationLink.url(page: "settings", anchor: "classic-data-migration-mode"))
+                .font(.callout)
+
+            Toggle("我已了解以上风险".localized, isOn: $classicModeAcknowledged)
+                .toggleStyle(.checkbox)
+
+            HStack {
+                Spacer()
+                Button("取消".localized) {
+                    showClassicModeAcknowledgement = false
+                }
+                .keyboardShortcut(.cancelAction)
+                Button("开启经典模式".localized) {
+                    classicDataMigrationEnabled = true
+                    showClassicModeAcknowledgement = false
+                    AppLogger.shared.log("经典数据迁移模式已开启（用户已确认风险）", level: "WARN")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(!classicModeAcknowledged)
+            }
+        }
         .padding(24)
-        .frame(minWidth: 420, minHeight: 550)
+        .frame(width: 520)
     }
 }
 
