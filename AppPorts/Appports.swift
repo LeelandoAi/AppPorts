@@ -32,6 +32,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // 应用可能被移动过：校准登录代理指向的程序，免得它指向一个已经不存在的路径。
+        Task.detached(priority: .utility) {
+            do { try await AutoResignInstaller.refreshInstalledScriptIfNeeded() }
+            catch { AppLogger.shared.logError("更新开机重签脚本失败", error: error) }
+            await ContainerMountAgentInstaller.refreshAtLaunch()
+        }
+    }
 }
 
 @main
@@ -39,8 +48,8 @@ struct AppMoverApp: App {
     /// 全局语言管理器
     @StateObject private var languageManager = LanguageManager.shared
 
-    /// 控制欢迎界面显示（首次启动为 true）
-    @State private var showWelcome = true
+    /// 控制欢迎界面显示。走完一次后不再自动出现，需要重看请到「设置 › 准备情况」。
+    @State private var showWelcome = !UserDefaults.standard.bool(forKey: WelcomeView.completionDefaultsKey)
     @ObservedObject private var operationState = AppOperationState.shared
     @StateObject private var logMenuState = LogMenuState()
     @AppStorage("LogEnabled") private var loggingEnabled = true
@@ -49,6 +58,10 @@ struct AppMoverApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // 以后台挂载代理身份启动时不创建任何窗口，重挂载完成后直接退出。
+        if ContainerMountAgentInstaller.isRunningAsAgent {
+            ContainerMountAgentInstaller.runAgentAndExit()
+        }
         // 应用启动时记录系统诊断信息
         AppLogger.shared.logLaunchSession()
     }
