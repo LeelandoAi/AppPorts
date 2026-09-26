@@ -21,6 +21,9 @@ fi
 
 mkdir -p "$LOG_DIR"
 
+# 经典数据迁移模式（用户已确认风险）
+CLASSIC_MODE=$(defaults read com.shimoko.AppPorts classicDataMigrationEnabled 2>/dev/null || echo 0)
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [RE-SIGN] $1" >> "$LOG_FILE"
 }
@@ -48,6 +51,13 @@ skipped_count=0
 failed_count=0
 
 for plist in "${backup_files[@]}"; do
+    # 完整快照必须由主应用按摘要校验、事务替换；旧脚本不能绕过这一流程。
+    schema_version=$(/usr/libexec/PlistBuddy -c "Print :schemaVersion" "$plist" 2>/dev/null || true)
+    if [ "$schema_version" = "2" ]; then
+        log "SKIP 完整签名备份，请在 AppPorts 中执行签名操作: $(basename "$plist")"
+        ((skipped_count++)) || true
+        continue
+    fi
     # 跳过 stub portal 备份（bundleIdentifier 含 .appports.stub）
     bundle_id=$(/usr/libexec/PlistBuddy -c "Print :bundleIdentifier" "$plist" 2>/dev/null || true)
     if [[ "$bundle_id" == *.appports.stub ]]; then
@@ -76,6 +86,23 @@ for plist in "${backup_files[@]}"; do
         log "SKIP 不可写: $app_path"
         ((skipped_count++)) || true
         continue
+    fi
+
+    # 沙盒应用跳过：重签名会抹掉沙盒/钥匙串授权，系统升级后应用无法启动。
+    # 经典数据迁移模式（用户已确认风险）下不跳过。
+    # 不用管道，避免 pipefail 把 codesign 的非零退出误判成「不是沙盒应用」。
+    if [ "$CLASSIC_MODE" != "1" ]; then
+        entitlements=$(/usr/bin/codesign -d --entitlements - --xml "$app_path" 2>/dev/null || true)
+        if [ -z "$entitlements" ]; then
+            entitlements=$(/usr/bin/codesign -d --entitlements :- "$app_path" 2>/dev/null || true)
+        fi
+        case "$entitlements" in
+            *com.apple.security.app-sandbox*)
+                log "SKIP 沙盒应用: $app_path"
+                ((skipped_count++)) || true
+                continue
+                ;;
+        esac
     fi
 
     # 清理隔离属性

@@ -13,6 +13,13 @@ actor CodeSigner {
         case restoreFailed(String)
         case noBackupFound
         case applicationUnavailable(URL)
+        case sandboxedApplication(URL)
+        case legacyBackupIncomplete
+        case snapshotInvalid
+        case applicationChanged
+        case operationInProgress
+        case atomicReplacementUnavailable
+        case originalApplicationMismatch
 
         var errorDescription: String? {
             switch self {
@@ -26,13 +33,31 @@ actor CodeSigner {
                 return "未找到原始签名备份".localized
             case .applicationUnavailable(let url):
                 return String(format: "无法找到真实应用，无法重签名：%@".localized, url.path)
+            case .sandboxedApplication(let url):
+                return String(format: "「%@」是沙盒应用。Ad-hoc 重签名会移除它的沙盒、应用组和钥匙串访问授权，系统升级后应用可能无法启动，默认拒绝重签名。容器数据请优先使用挂载迁移。".localized, url.lastPathComponent)
+            case .legacyBackupIncomplete:
+                return "旧版备份只记录了签名身份，没有保存原始应用，无法直接恢复。请选择从官方渠道取得的同版本原版应用，或从官方渠道重新安装；现有应用和备份均已保留。".localized
+            case .snapshotInvalid:
+                return "原始应用备份缺失或校验失败，已停止恢复。现有应用和备份均已保留。".localized
+            case .applicationChanged:
+                return "应用内容已更新或改变，不能用旧备份覆盖。请选择同版本原版应用恢复，或从官方渠道重新安装；现有应用和备份均已保留。".localized
+            case .operationInProgress:
+                return "另一项签名操作正在进行，请稍后重试。".localized
+            case .atomicReplacementUnavailable:
+                return "此存储不支持安全替换应用。请先将应用迁回本地，再重试签名操作。原应用和备份均已保留。".localized
+            case .originalApplicationMismatch:
+                return "所选原版应用的标识、版本或开发者签名不匹配，或签名校验失败。请选择同一应用、同一版本的官方原版。".localized
             }
         }
     }
 
+    /// 沙盒授权键；默认拒绝重签，经典模式必须先保存完整原始应用。
+    static let sandboxEntitlementKey = "com.apple.security.app-sandbox"
+    private static let entitlementsQueryTimeout: TimeInterval = 10
+
     private static let backupDirectoryName = "signature-backups"
 
-    private static var defaultBackupDirectoryURL: URL {
+    static var defaultBackupDirectoryURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport.appendingPathComponent("AppPorts/\(backupDirectoryName)")
     }
@@ -40,10 +65,19 @@ actor CodeSigner {
     private let fileManager = FileManager.default
     private let backupDirectoryURL: URL
     private let allowAdministratorPrompt: Bool
+    private let exchangeApplications: @Sendable (URL, URL) throws -> Void
+    private let copyApplication: @Sendable (URL, URL) throws -> Void
 
-    init(backupDirectoryURL: URL? = nil, allowAdministratorPrompt: Bool = true) {
+    init(
+        backupDirectoryURL: URL? = nil,
+        allowAdministratorPrompt: Bool = true,
+        exchangeApplications: @escaping @Sendable (URL, URL) throws -> Void = { try SignatureSnapshot.exchange($0, $1) },
+        copyApplication: @escaping @Sendable (URL, URL) throws -> Void = { try SignatureSnapshot.copy(from: $0, to: $1) }
+    ) {
         self.backupDirectoryURL = backupDirectoryURL ?? Self.defaultBackupDirectoryURL
         self.allowAdministratorPrompt = allowAdministratorPrompt
+        self.exchangeApplications = exchangeApplications
+        self.copyApplication = copyApplication
     }
 
     static func ownershipRepairAppleScript(username: String, appPath: String) -> String {
@@ -125,30 +159,125 @@ actor CodeSigner {
         return plist["CFBundleIdentifier"] as? String
     }
 
-    /// 仅备份原始签名身份（不执行签名），用于迁移前预备份
-    func backupOriginalSignature(appURL: URL, bundleIdentifier: String) throws {
-        let appURL = try Self.resolveAppURL(at: appURL)
-        try ensureBackupDirectory()
-        try saveOriginalSignature(appURL: appURL, bundleIdentifier: Self.bundleIdentifier(at: appURL) ?? bundleIdentifier)
+    /// 读取应用主可执行文件的 entitlements；未签名或读取失败返回 nil。
+    ///
+    /// 新系统用 `--xml` 输出 plist；旧系统只认 `:-`（去掉 blob 头的 XML）。两种都试，解析成功即返回。
+    static func entitlements(at appURL: URL) -> [String: Any]? {
+        for arguments in [
+            ["--display", "--entitlements", "-", "--xml", appURL.path],
+            ["--display", "--entitlements", ":-", appURL.path]
+        ] {
+            guard let output = runCodesignQuery(arguments: arguments, timeout: entitlementsQueryTimeout) else { continue }
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty,
+                  let plist = try? PropertyListSerialization.propertyList(from: Data(trimmed.utf8), format: nil) as? [String: Any] else {
+                continue
+            }
+            return plist
+        }
+        return nil
     }
 
-    /// 临时解锁真实应用及其子项，完成深度重签和校验后恢复原有锁定状态。
-    func sign(appURL: URL, bundleIdentifier: String?) async throws {
-        let appURL = try Self.resolveAppURL(at: appURL)
-        try ensureBackupDirectory()
+    /// 应用是否以沙盒身份运行。沙盒应用访问容器只能靠 entitlements，不能靠重签名。
+    static func isSandboxed(at appURL: URL) -> Bool {
+        guard let entitlements = entitlements(at: appURL) else { return false }
+        if let flag = entitlements[sandboxEntitlementKey] as? Bool {
+            return flag
+        }
+        return (entitlements[sandboxEntitlementKey] as? NSNumber)?.boolValue == true
+    }
 
-        if let bundleID = Self.bundleIdentifier(at: appURL) ?? bundleIdentifier {
-            try saveOriginalSignature(appURL: appURL, bundleIdentifier: bundleID)
+    /// 只读查询，带超时；返回 codesign 的标准输出，失败或超时返回 nil。
+    private static func runCodesignQuery(arguments: [String], timeout: TimeInterval) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = arguments
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return nil
         }
 
-        try withUnlockedBundle(at: appURL) { items in
-            try withOwnershipRepair(at: appURL) {
-                try stripSigningDetritus(from: items)
-                cleanBundleRoot(at: appURL)
-                try runCodesign(arguments: ["--force", "--deep", "--sign", "-", appURL.path])
-                try runCodesign(arguments: ["--verify", "--deep", "--strict", appURL.path], retries: 0)
+        // 超时后终止进程；持续读取避免 entitlements 较长时填满 pipe 导致进程无法退出。
+        let timeoutWork = DispatchWorkItem {
+            guard process.isRunning else { return }
+            process.terminate()
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: timeoutWork)
+        let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        timeoutWork.cancel()
+
+        guard process.terminationStatus == 0 else {
+            if process.terminationReason == .uncaughtSignal {
+                AppLogger.shared.logContext(
+                    "codesign 查询超时，已终止",
+                    details: [("arguments", arguments.joined(separator: " ")), ("timeout_sec", String(Int(timeout)))],
+                    level: "WARN"
+                )
             }
+            return nil
         }
+        return String(decoding: output, as: UTF8.self)
+    }
+
+    /// 迁移前保存完整原始应用，包含签名、授权及所有嵌套代码。
+    func backupOriginalSignature(appURL: URL, bundleIdentifier: String) async throws {
+        let appURL = try Self.resolveAppURL(at: appURL)
+        try await ensureBackupDirectory()
+        let lock = try acquireSignatureLock()
+        defer { lock.release() }
+        _ = try saveOriginalSignature(appURL: appURL, bundleIdentifier: Self.bundleIdentifier(at: appURL) ?? bundleIdentifier)
+    }
+
+    /// 在工作副本中重签，校验并保存可恢复状态后才替换真实应用。
+    /// 默认拒绝沙盒应用；经典模式允许重签，但先保存可恢复的原始应用。
+    /// `allowSandboxed` 仅供经典数据迁移模式使用，调用方必须已向用户说明后果。
+    func sign(appURL: URL, bundleIdentifier: String?, allowSandboxed: Bool = false) async throws {
+        let appURL = try Self.resolveAppURL(at: appURL)
+        if !allowSandboxed, Self.isSandboxed(at: appURL) {
+            AppLogger.shared.logError(
+                "拒绝重签名沙盒应用",
+                errorCode: "RESIGN-REFUSED-SANDBOXED",
+                context: [("bundle_id", bundleIdentifier ?? Self.bundleIdentifier(at: appURL) ?? "nil")],
+                relatedURLs: [("app", appURL)]
+            )
+            throw SigningError.sandboxedApplication(appURL)
+        }
+        try await ensureBackupDirectory()
+        let lock = try acquireSignatureLock()
+        defer { lock.release() }
+        guard let bundleID = Self.bundleIdentifier(at: appURL) ?? bundleIdentifier else {
+            throw SigningError.backupFailed("无法读取应用 Bundle Identifier".localized)
+        }
+        var backup = try saveOriginalSignature(appURL: appURL, bundleIdentifier: bundleID)
+        let originalFingerprint = try SignatureSnapshot.fingerprint(of: appURL)
+        guard backup.restorableFingerprints?.contains(originalFingerprint) == true else {
+            throw SigningError.applicationChanged
+        }
+        let work = try makeWorkingCopy(of: appURL, beside: appURL)
+        defer { removeWorkingDirectory(work.deletingLastPathComponent()) }
+        guard try SignatureSnapshot.fingerprint(of: work) == originalFingerprint else {
+            throw SigningError.applicationChanged
+        }
+        try SignatureSnapshot.validateLinksForSigning(in: work)
+        try withUnlockedBundle(at: work) { items in
+                try stripSigningDetritus(from: items)
+                cleanBundleRoot(at: work)
+                try runCodesign(arguments: ["--force", "--deep", "--sign", "-", work.path])
+                try runCodesign(arguments: ["--verify", "--deep", "--strict", work.path], retries: 0)
+        }
+        let signedFingerprint = try SignatureSnapshot.fingerprint(of: work)
+        // 在交换前持久化两种有效状态：即使此刻退出，下次也能识别交换前/后的应用。
+        var accepted = backup.restorableFingerprints ?? []
+        if !accepted.contains(signedFingerprint) { accepted.append(signedFingerprint) }
+        backup.restorableFingerprints = accepted
+        try writeBackup(backup)
+        try replaceApplication(at: appURL, with: work, expectedFingerprint: originalFingerprint)
 
         AppLogger.shared.logContext(
             "Ad-hoc 重签名完成",
@@ -220,57 +349,83 @@ actor CodeSigner {
         return nil
     }
 
-    /// 恢复原始签名
-    ///
-    /// 读取备份 plist，用原始签名身份重新签名。
-    func restoreSignature(appURL: URL, bundleIdentifier: String) async throws {
+    /// 从完整原始应用恢复，不重新签名，不依赖开发者私钥。
+    /// 旧版记录可由用户提供的同版本官方原版补救；不会把身份名称当作可恢复备份。
+    func restoreSignature(appURL: URL, bundleIdentifier: String, originalApplication: URL? = nil) async throws {
         let appURL = try Self.resolveAppURL(at: appURL)
         let bundleIdentifier = Self.bundleIdentifier(at: appURL) ?? bundleIdentifier
-        guard let backup = loadBackup(bundleIdentifier: bundleIdentifier) else {
+        try await ensureBackupDirectory()
+        let lock = try acquireSignatureLock()
+        defer { lock.release() }
+        guard let backup = try readBackup(bundleIdentifier: bundleIdentifier) else {
             throw SigningError.noBackupFound
         }
-
-        let identity = backup.signingIdentity
-        try withUnlockedBundle(at: appURL) { items in
-            try withOwnershipRepair(at: appURL) {
-                try stripSigningDetritus(from: items)
-                cleanBundleRoot(at: appURL)
-                if identity.isEmpty || identity == "ad-hoc" {
-                    try runCodesign(arguments: ["--remove-signature", appURL.path])
-                    return
-                }
-
-                let signingIdentity: String
-                if isIdentityAvailable(identity) {
-                    signingIdentity = identity
-                } else {
-                    AppLogger.shared.logContext(
-                        "原始签名身份不在钥匙串中，回退到 ad-hoc 签名",
-                        details: [("identity", identity), ("path", appURL.path)],
-                        level: "WARN"
-                    )
-                    signingIdentity = "-"
-                }
-                try runCodesign(arguments: ["--force", "--deep", "--sign", signingIdentity, appURL.path])
-                try runCodesign(arguments: ["--verify", "--deep", "--strict", appURL.path], retries: 0)
+        let currentFingerprint = try SignatureSnapshot.fingerprint(of: appURL)
+        let original: URL
+        let originalFingerprint: String
+        let verifyOriginal: Bool
+        if let originalApplication {
+            original = try Self.resolveAppURL(at: originalApplication)
+            guard original != appURL else { throw SigningError.originalApplicationMismatch }
+            try validateOriginalApplication(original, for: appURL, backup: backup)
+            originalFingerprint = try SignatureSnapshot.fingerprint(of: original)
+            verifyOriginal = true
+        } else {
+            original = try verifiedSnapshot(for: backup)
+            guard let digest = backup.originalFingerprint,
+                  backup.restorableFingerprints?.contains(currentFingerprint) == true else {
+                throw SigningError.applicationChanged
             }
+            originalFingerprint = digest
+            verifyOriginal = backup.originalSignatureWasValid == true
         }
-
+        // 即使内容摘要相同，也恢复快照中的 ACL、Finder 元数据等未纳入摘要的属性。
+        do {
+            let work = try makeWorkingCopy(of: original, beside: appURL)
+            defer { removeWorkingDirectory(work.deletingLastPathComponent()) }
+            guard try SignatureSnapshot.fingerprint(of: work) == originalFingerprint else {
+                throw SigningError.snapshotInvalid
+            }
+            if verifyOriginal {
+                try runCodesign(arguments: ["--verify", "--deep", "--strict", work.path], retries: 0)
+            }
+            try replaceApplication(at: appURL, with: work, expectedFingerprint: currentFingerprint)
+        }
+        // 只有交换完成后才清理；清理失败不会伪报恢复失败。
         removeBackup(bundleIdentifier: bundleIdentifier)
-        AppLogger.shared.logContext(
-            "恢复原始签名完成",
-            details: [
-                ("path", appURL.path),
-                ("identity", identity),
-                ("bundle_id", bundleIdentifier)
-            ]
-        )
+        AppLogger.shared.logContext("恢复原始签名完成", details: [
+            ("path", appURL.path), ("bundle_id", bundleIdentifier),
+            ("source", originalApplication == nil ? "snapshot" : "user-selected-original")
+        ])
     }
 
     /// 检查是否有备份
     func hasBackup(bundleIdentifier: String) -> Bool {
         let backupURL = backupFileURL(for: bundleIdentifier)
         return fileManager.fileExists(atPath: backupURL.path)
+    }
+
+    /// 备份目录里是否存在任何签名备份。
+    /// 启动时的「签名已被替换」提醒据此在没有备份时直接跳过目录枚举。
+    nonisolated static func hasSignatureBackups(backupDirectoryURL: URL? = nil) -> Bool {
+        let directory = backupDirectoryURL ?? defaultBackupDirectoryURL
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else { return false }
+        return entries.contains { $0.hasSuffix(".plist") }
+    }
+
+    /// 备份里记录的原始签名身份；没有备份返回 nil。供扫描器判断签名是否被替换。
+    nonisolated static func originalSigningIdentity(bundleIdentifier: String, backupDirectoryURL: URL? = nil) -> String? {
+        let directory = backupDirectoryURL ?? defaultBackupDirectoryURL
+        let url = directory.appendingPathComponent("\(bundleIdentifier).plist")
+        guard let data = try? Data(contentsOf: url),
+              let backup = try? PropertyListDecoder().decode(SignatureBackup.self, from: data) else { return nil }
+        return backup.signingIdentity
+    }
+
+    /// 原始签名是否已被 Ad-hoc 替换。
+    nonisolated static func isSignatureReplaced(originalIdentity: String?, currentlyAdHoc: Bool) -> Bool {
+        guard currentlyAdHoc, let originalIdentity, !originalIdentity.isEmpty, originalIdentity != "ad-hoc" else { return false }
+        return true
     }
 
     // MARK: - Signature Status
@@ -290,53 +445,204 @@ actor CodeSigner {
         let signingIdentity: String
         let originalPath: String
         let backupDate: Date
+        var schemaVersion: Int? = nil
+        var snapshotName: String? = nil
+        var originalFingerprint: String? = nil
+        var restorableFingerprints: [String]? = nil
+        var originalSignatureWasValid: Bool? = nil
     }
 
-    private func saveOriginalSignature(appURL: URL, bundleIdentifier: String) throws {
-        let backupURL = backupFileURL(for: bundleIdentifier)
-        guard !fileManager.fileExists(atPath: backupURL.path) else { return }
-
-        let identity = syncGetSigningIdentity(appURL: appURL)
-        let backup = SignatureBackup(
+    private func saveOriginalSignature(appURL: URL, bundleIdentifier: String) throws -> SignatureBackup {
+        let currentFingerprint = try SignatureSnapshot.fingerprint(of: appURL)
+        var retiredBackup: SignatureBackup?
+        if let existing = try readBackup(bundleIdentifier: bundleIdentifier) {
+            if existing.schemaVersion == 2, existing.restorableFingerprints?.contains(currentFingerprint) == true {
+                _ = try verifiedSnapshot(for: existing)
+                return existing
+            }
+            // 官方更新/重装后，以当前完整有效的开发者签名应用建立新恢复点。
+            // 旧记录与快照先归档，绝不把新版摘要混入旧版快照。
+            guard let identity = syncGetSigningIdentity(appURL: appURL),
+                  identity == existing.signingIdentity,
+                  (try? runCodesign(arguments: ["--verify", "--deep", "--strict", appURL.path], retries: 0)) != nil else {
+                throw existing.schemaVersion == 2 ? SigningError.applicationChanged : SigningError.legacyBackupIncomplete
+            }
+            retiredBackup = existing
+        }
+        let name = "original-" + UUID().uuidString + ".app"
+        let snapshot = backupDirectoryURL.appendingPathComponent(name)
+        var committed = false
+        defer { if !committed { removeWorkingDirectory(snapshot) } }
+        try copyApplication(appURL, snapshot)
+        guard try SignatureSnapshot.fingerprint(of: snapshot) == currentFingerprint,
+              try SignatureSnapshot.fingerprint(of: appURL) == currentFingerprint else {
+            throw SigningError.applicationChanged
+        }
+        let wasValid = (try? runCodesign(arguments: ["--verify", "--deep", "--strict", snapshot.path], retries: 0)) != nil
+        var backup = SignatureBackup(
             bundleIdentifier: bundleIdentifier,
-            signingIdentity: identity ?? "ad-hoc",
+            signingIdentity: syncGetSigningIdentity(appURL: snapshot) ?? "ad-hoc",
             originalPath: appURL.path,
             backupDate: Date()
         )
-
-        let encoder = PropertyListEncoder()
-        encoder.outputFormat = .xml
-        let data = try encoder.encode(backup)
-        try data.write(to: backupURL)
-        AppLogger.shared.logContext(
-            "签名身份已备份",
-            details: [
-                ("bundle_id", bundleIdentifier),
-                ("identity", backup.signingIdentity),
-                ("backup_path", backupURL.path)
-            ]
-        )
+        backup.schemaVersion = 2
+        backup.snapshotName = name
+        backup.originalFingerprint = currentFingerprint
+        backup.restorableFingerprints = [currentFingerprint]
+        backup.originalSignatureWasValid = wasValid
+        if let retiredBackup {
+            let archive = backupDirectoryURL.appendingPathComponent("retired")
+            try fileManager.createDirectory(at: archive, withIntermediateDirectories: true)
+            let encoder = PropertyListEncoder()
+            encoder.outputFormat = .xml
+            try encoder.encode(retiredBackup).write(to: archive.appendingPathComponent(UUID().uuidString + ".plist"), options: .atomic)
+        }
+        try writeBackup(backup)
+        committed = true
+        AppLogger.shared.logContext("原始应用与签名已完整备份", details: [
+            ("bundle_id", bundleIdentifier), ("snapshot", snapshot.path)
+        ])
+        return backup
     }
 
-    private func loadBackup(bundleIdentifier: String) -> SignatureBackup? {
-        let backupURL = backupFileURL(for: bundleIdentifier)
-        guard let data = try? Data(contentsOf: backupURL) else { return nil }
-        return try? PropertyListDecoder().decode(SignatureBackup.self, from: data)
+    private func readBackup(bundleIdentifier: String) throws -> SignatureBackup? {
+        let url = backupFileURL(for: bundleIdentifier)
+        // 不允许应用的 Bundle ID 把记录写到备份目录外。
+        guard !bundleIdentifier.isEmpty, url.deletingLastPathComponent().standardizedFileURL == backupDirectoryURL.standardizedFileURL else {
+            throw SigningError.snapshotInvalid
+        }
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        do {
+            let backup = try PropertyListDecoder().decode(SignatureBackup.self, from: Data(contentsOf: url))
+            guard backup.bundleIdentifier == bundleIdentifier else { throw SigningError.snapshotInvalid }
+            return backup
+        } catch { throw SigningError.snapshotInvalid }
+    }
+
+    private func verifiedSnapshot(for backup: SignatureBackup) throws -> URL {
+        guard backup.schemaVersion == 2 else { throw SigningError.legacyBackupIncomplete }
+        guard let snapshot = snapshotURL(for: backup), let fingerprint = backup.originalFingerprint,
+              (try? SignatureSnapshot.info(at: snapshot).st_mode & S_IFMT) == S_IFDIR,
+              (try? SignatureSnapshot.fingerprint(of: snapshot)) == fingerprint else {
+            throw SigningError.snapshotInvalid
+        }
+        return snapshot
+    }
+
+    private func snapshotURL(for backup: SignatureBackup) -> URL? {
+        guard let name = backup.snapshotName,
+              name.hasPrefix("original-"), name.hasSuffix(".app"),
+              URL(fileURLWithPath: name).lastPathComponent == name else { return nil }
+        return backupDirectoryURL.appendingPathComponent(name)
+    }
+
+    private func writeBackup(_ backup: SignatureBackup) throws {
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .xml
+        try encoder.encode(backup).write(to: backupFileURL(for: backup.bundleIdentifier), options: .atomic)
     }
 
     private func removeBackup(bundleIdentifier: String) {
-        let backupURL = backupFileURL(for: bundleIdentifier)
-        try? fileManager.removeItem(at: backupURL)
+        do {
+            let snapshot = try readBackup(bundleIdentifier: bundleIdentifier).flatMap(snapshotURL(for:))
+            try fileManager.removeItem(at: backupFileURL(for: bundleIdentifier))
+            if let snapshot { try SignatureSnapshot.remove(snapshot) }
+        } catch {
+            AppLogger.shared.logError("签名已恢复，但备份清理未完成", error: error)
+        }
     }
 
     private func backupFileURL(for bundleIdentifier: String) -> URL {
         backupDirectoryURL.appendingPathComponent("\(bundleIdentifier).plist")
     }
 
-    private func ensureBackupDirectory() throws {
-        let dir = backupDirectoryURL
-        if !fileManager.fileExists(atPath: dir.path) {
-            try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+    private func ensureBackupDirectory() async throws {
+        try fileManager.createDirectory(at: backupDirectoryURL, withIntermediateDirectories: true)
+        if backupDirectoryURL == Self.defaultBackupDirectoryURL {
+            try await AutoResignInstaller.stopBackgroundTask()
+            try await AutoResignInstaller.refreshInstalledScriptIfNeeded()
+        }
+    }
+
+    private func acquireSignatureLock() throws -> OperationLock {
+        // 每次用独立文件描述符，防止多个 CodeSigner 实例把同一个可重入锁当作已取得。
+        let lock = OperationLock(fileURL: backupDirectoryURL.appendingPathComponent("signature-operation.lock"))
+        guard lock.tryAcquire() else { throw SigningError.operationInProgress }
+        return lock
+    }
+
+    private func makeWorkingCopy(of source: URL, beside app: URL) throws -> URL {
+        let directory = app.deletingLastPathComponent().appendingPathComponent(".AppPorts-signature-" + UUID().uuidString)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: false)
+        let copy = directory.appendingPathComponent(app.lastPathComponent)
+        do {
+            try copyApplication(source, copy)
+            guard try SignatureSnapshot.fingerprint(of: source) == SignatureSnapshot.fingerprint(of: copy) else {
+                throw SigningError.snapshotInvalid
+            }
+            return copy
+        } catch {
+            removeWorkingDirectory(directory)
+            throw error
+        }
+    }
+
+    private func removeWorkingDirectory(_ directory: URL) {
+        do { try SignatureSnapshot.remove(directory) }
+        catch { AppLogger.shared.logError("清理签名工作副本失败", error: error, relatedURLs: [("path", directory)]) }
+    }
+
+    private func replaceApplication(at app: URL, with work: URL, expectedFingerprint: String) throws {
+        guard try SignatureSnapshot.fingerprint(of: app) == expectedFingerprint else {
+            throw SigningError.applicationChanged
+        }
+        let lockedPaths = try bundleItems(at: app).filter { try fileInfo(at: $0).st_flags & UInt32(UF_IMMUTABLE) != 0 }
+        let workRootLocked = try fileInfo(at: work).st_flags & UInt32(UF_IMMUTABLE) != 0
+        var exchanged = false
+        do {
+            try withOwnershipRepair(at: app) {
+                // 只解开目录根的锁；原子交换无需修改目录内的文件。
+                try setImmutable(false, at: app)
+                try setImmutable(false, at: work)
+                try exchangeApplications(app, work)
+                exchanged = true
+            }
+        } catch {
+            try? restoreImmutableItems(lockedPaths)
+            if workRootLocked { try? setImmutable(true, at: work) }
+            throw error
+        }
+        if exchanged {
+            do {
+                try restoreImmutableItems(lockedPaths)
+                if workRootLocked { try setImmutable(true, at: app) }
+            } catch {
+                // 内容已完整提交，锁定状态修复失败不能当成内容恢复失败。
+                AppLogger.shared.logError("签名操作完成，但恢复应用锁定状态失败", error: error)
+            }
+        }
+    }
+
+    private func validateOriginalApplication(_ original: URL, for current: URL, backup: SignatureBackup) throws {
+        func metadata(_ url: URL) -> [String: Any]? {
+            guard let data = try? Data(contentsOf: url.appendingPathComponent("Contents/Info.plist")) else { return nil }
+            return try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        }
+        guard Self.bundleIdentifier(at: original) == backup.bundleIdentifier,
+              let currentInfo = metadata(current), let originalInfo = metadata(original) else {
+            throw SigningError.originalApplicationMismatch
+        }
+        for key in ["CFBundleVersion", "CFBundleShortVersionString"] {
+            guard currentInfo[key] as? String == originalInfo[key] as? String else {
+                throw SigningError.originalApplicationMismatch
+            }
+        }
+        if !backup.signingIdentity.isEmpty, backup.signingIdentity != "ad-hoc",
+           syncGetSigningIdentity(appURL: original) != backup.signingIdentity {
+            throw SigningError.originalApplicationMismatch
+        }
+        guard (try? runCodesign(arguments: ["--verify", "--deep", "--strict", original.path], retries: 0)) != nil else {
+            throw SigningError.originalApplicationMismatch
         }
     }
 
@@ -422,40 +728,6 @@ actor CodeSigner {
             }
             throw error
         }
-    }
-
-    // MARK: - Identity Check
-
-    /// 检查签名身份是否存在于钥匙串中（精确匹配，非子串）
-    private func isIdentityAvailable(_ identity: String) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-identity", "-v", "-p", "codesigning"]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            return false
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-
-        // 解析 security find-identity 输出，格式：
-        //   1) HASH "identity name"
-        // 精确匹配引号内的身份名称
-        for line in output.components(separatedBy: "\n") {
-            guard let start = line.firstIndex(of: "\""),
-                  let end = line[start...].dropFirst().firstIndex(of: "\"") else { continue }
-            let found = String(line[line.index(after: start)..<end])
-            if found == identity { return true }
-        }
-        return false
     }
 
     // MARK: - Codesign Execution

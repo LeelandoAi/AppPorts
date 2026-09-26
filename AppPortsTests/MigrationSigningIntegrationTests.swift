@@ -51,7 +51,7 @@ struct MigrationSigningIntegrationTests {
         }
     }
 
-    @Test("Signing a migrated Sparkle app removes sandbox entitlements and restores its locks", .bug("https://github.com/wzh4869/AppPorts/issues/59"))
+    @Test("Signing a migrated sandboxed Sparkle app is refused and keeps its entitlements and locks", .bug("https://github.com/wzh4869/AppPorts/issues/59"))
     func signingMigratedLockedApplication() async throws {
         let workspace = try IntegrationWorkspace()
         defer { workspace.cleanup() }
@@ -73,19 +73,26 @@ struct MigrationSigningIntegrationTests {
         try #require(originalLocks.count > 10)
         try #require(originalLocks.values.allSatisfy { $0 }, "The migrated Sparkle bundle must actually be recursively locked")
         let stubExecutable = try Data(contentsOf: localApp.appendingPathComponent("Contents/MacOS/launcher"))
+        let externalExecutable = try Data(contentsOf: externalApp.appendingPathComponent("Contents/MacOS/Chat"))
+        let backups = workspace.rootURL.appendingPathComponent("SignatureBackups")
 
-        let signer = CodeSigner(
-            backupDirectoryURL: workspace.rootURL.appendingPathComponent("SignatureBackups"),
-            allowAdministratorPrompt: false
-        )
-        try await signer.sign(appURL: localApp, bundleIdentifier: nil)
+        // 沙盒应用的容器访问只靠 entitlements；ad-hoc 重签名会抹掉它们且无法恢复，必须在改动前拒绝。
+        let signer = CodeSigner(backupDirectoryURL: backups, allowAdministratorPrompt: false)
+        do {
+            try await signer.sign(appURL: localApp, bundleIdentifier: nil)
+            Issue.record("A migrated sandboxed application must not be ad-hoc re-signed")
+        } catch CodeSigner.SigningError.sandboxedApplication(let url) {
+            #expect(url.resolvingSymlinksInPath().path == externalApp.resolvingSymlinksInPath().path)
+        }
 
         try verifySignature(at: externalApp)
         try verifySignature(at: externalApp.appendingPathComponent(helperPath))
-        #expect(try sandboxEnabled(at: externalApp) == false)
-        #expect(try sandboxEnabled(at: externalApp.appendingPathComponent(helperPath)) == false)
+        #expect(try sandboxEnabled(at: externalApp))
+        #expect(try sandboxEnabled(at: externalApp.appendingPathComponent(helperPath)))
         #expect(try immutableFlags(in: externalApp) == originalLocks)
+        #expect(try Data(contentsOf: externalApp.appendingPathComponent("Contents/MacOS/Chat")) == externalExecutable)
         #expect(try Data(contentsOf: localApp.appendingPathComponent("Contents/MacOS/launcher")) == stubExecutable)
+        #expect(FileManager.default.fileExists(atPath: backups.path) == false)
         #expect(try FileManager.default.destinationOfSymbolicLink(
             atPath: externalApp.appendingPathComponent("Contents/Frameworks/Sparkle.framework/Versions/Current").path
         ) == "A")
