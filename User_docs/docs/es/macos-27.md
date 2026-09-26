@@ -5,8 +5,38 @@ outline: deep
 # Guía de actualización a macOS 27
 
 ::: tip Lo esencial
-Si migró datos de contenedores de WeChat u otras apps con AppPorts y aceptó volver a firmarlas, tras actualizar a macOS 27 **pueden** cerrarse inmediatamente al hacer doble clic. Ocurre con WeChat; QQ Music y otras siguen abriéndose en las pruebas. **Los datos no están dañados** y no hay que migrarlos de nuevo. Restáurelos en el Mac y reinstale la app desde una fuente oficial. Para volver a guardarlos en el disco externo, use la nueva [migración por montaje](/es/datamigrae/mount-migration).
+Si WeChat u otra app deja de abrirse desde Finder / Dock en macOS 27 tras aceptar una nueva firma en una versión antigua o de prueba de AppPorts, siga la reparación de abajo. Restaure los enlaces de contenedores antiguos y después la app original, o reinstale su versión oficial. **No borre las carpetas de datos ni vuelva a firmar la app.** Un error de firma no demuestra que los datos estén dañados.
 :::
+
+## Reparación
+
+Pulse **«Reparar»** directamente en la fila de la app, o «Ver los pasos de reparación» en su menú contextual. No necesita comandos de Terminal. Esta guía corresponde a la versión en desarrollo; las versiones sin panel también permiten seguir los pasos manuales. Conecte el disco original, cierre completamente la app y conserve datos y copias de seguridad.
+
+::: tip Firma automática al iniciar sesión
+La versión de desarrollo actual desactiva la firma automática al iniciar sesión en macOS 27 o posterior, y detiene y elimina la tarea anterior. Si la limpieza no se completa, vuelve a intentarlo en Ajustes.
+
+**Actualiza y abre AppPorts una vez antes de actualizar macOS** para que la tarea en segundo plano instalada reciba la comprobación de versión. Descargar la nueva versión sin abrirla no actualiza la tarea anterior.
+:::
+
+### 1. Restaurar los datos trasladados mediante enlaces antiguos
+
+Si el panel encuentra enlaces de contenedores hacia el disco externo, pulse «Restaurar todo». Si no existen, omita este paso. Ruta manual: Directorios de datos → Datos de apps → seleccionar la app → restaurar los contenedores enlazados. Los datos que ya usan montaje APFS no necesitan volver al Mac solo para reparar la firma.
+
+### 2. Restaurar la app original o reinstalar oficialmente
+
+- **Copia completa de la app original:** use «Restaurar firma original». Puede restaurar directamente la app real del disco externo, sin moverla antes al Mac. AppPorts comprueba que la app actual coincida con la copia. Si se ha actualizado o modificado, necesita un original oficial coincidente.
+- **Solo un registro antiguo de identidad:** seleccione una `.app` oficial de la misma versión o reinstale desde App Store / la web del desarrollador. El nombre del certificado no puede reconstruir la firma.
+- **Instalación encima de una app externa:** devuélvala primero al Mac para que el instalador no sustituya únicamente el lanzador local.
+
+**No borre las carpetas de datos de contenedores.** Guarde aparte una copia de los datos importantes. El acceso al historial y a las sesiones también depende de versiones, permisos y estado de los datos. Véase [Copias y restauración de firmas](/es/datamigrae/resign).
+
+### 3. Comprobar de nuevo y abrir desde Finder / Dock
+
+Pulse «Comprobar de nuevo» y después abra la app desde Finder / Dock y verifique sus datos. Una comprobación no disponible no significa firma sustituida ni reparación completa: conecte el disco y repita. Los análisis conservan las copias. Puede atender más tarde una app que aún se abre, pero abrirse no demuestra que haya recuperado su firma original.
+
+### 4. Opcional: continuar la migración de datos
+
+Tras reparar, seleccione el directorio en Datos de apps y pulse «Migrar». AppPorts comprueba el destino y usa [migración APFS mediante montaje](/es/datamigrae/mount-migration) para los contenedores, conservando la firma. Actualmente se requiere un **disco externo APFS sin cifrar**. Puede elegir otro disco o dejar los datos en el Mac. Permita el acceso a volúmenes extraíbles si macOS lo solicita y conecte el disco antes de usar la app. Véase [Preparar APFS](/es/why-apfs#what-to-do).
 
 ## A quién afecta
 
@@ -15,78 +45,12 @@ Si migró datos de contenedores de WeChat u otras apps con AppPorts y aceptó vo
 | Desencadenante | Actualización a macOS 27 |
 | Apps afectadas | Apps cuyos datos de `~/Library/Containers/` o `~/Library/Group Containers/` se migraron y que se volvieron a firmar con Ad-hoc, o apps aisladas firmadas manualmente desde el menú contextual |
 | Síntomas habituales | Doble clic en Finder / Dock sin respuesta; el icono aparece y desaparece sin diálogo de error. No ocurre con todas las apps: QQ Music funciona en el mismo Mac con 27 |
-| Datos | Intactos, incluidos historial y sesión |
+| Datos | Un error de firma no demuestra daños en los datos; conserve los originales y sus copias |
 | Caso confirmado | WeChat 4.1.15, macOS 27.0 (26A428) |
 
 Volver a firmar elimina la identidad aislada. Cuando macOS 27 comprueba si la app puede acceder al contenedor, una autorización guardada para su firma antigua puede no coincidir con la nueva y se rechaza el acceso. WeChat registra `Failed to match existing code requirement`. Las apps sin registros antiguos, como QQ Music, aún pueden pasar, pero no recuperan los derechos perdidos, como los del llavero. Consulte [Datos de contenedores, aislamiento e identidad de firma](/es/datamigrae/container-identity).
 
-## Antes de actualizar: comprobar
-
-Este script muestra las apps cuya firma sustituyó AppPorts. Cada resultado es una app que podría presentar problemas después de actualizar.
-
-```bash
-BACKUP_DIR="$HOME/Library/Application Support/AppPorts/signature-backups"
-for plist in "$BACKUP_DIR"/*.plist; do
-  [ -f "$plist" ] || continue
-  original=$(/usr/libexec/PlistBuddy -c "Print :signingIdentity" "$plist" 2>/dev/null)
-  app=$(/usr/libexec/PlistBuddy -c "Print :originalPath" "$plist" 2>/dev/null)
-  case "$original" in ""|ad-hoc) continue ;; esac   # 本来就是 ad-hoc 的跳过
-  [ -d "$app" ] || continue
-  if codesign -dv "$app" 2>&1 | grep -q "Signature=adhoc"; then
-    printf "%s\n    原始签名: %s\n" "$app" "$original"
-  fi
-done
-```
-
-Complete si es posible la [reparación](#reparacion) antes de actualizar. Como mínimo, guarde la lista para saber qué apps comprobar después.
-
-## Después de actualizar: confirmar los síntomas
-
-```bash
-# 1. 签名（出现 Signature=adhoc 且 TeamIdentifier=not set 即已被重签名）
-codesign -dv --verbose=4 /Applications/WeChat.app 2>&1 | grep -E "Authority|TeamIdentifier|Signature"
-
-# 2. 复现并看系统日志
-open -a /Applications/WeChat.app; sleep 3
-log show --last 1m --style compact 2>/dev/null | grep -i "rejected approval request"
-```
-
-La aparición de `kTCCServiceSystemPolicyAppData ... denied` en el paso 2 confirma el problema. Hay una lista más completa en la [comprobación de identidad del contenedor](/es/datamigrae/container-identity#comprobacion).
-
-## Reparación
-
-AppPorts 1.8.2 detecta estas apps, muestra la insignia roja «Firma sustituida» y avisa una vez al arrancar. «Ver los pasos de reparación» en el menú contextual abre un panel con el estado y los botones de cada paso, sin eliminar datos. El procedimiento manual sigue el mismo orden. **No cambie el orden.**
-
-### Paso 1: restaurar los datos de contenedores en el Mac
-
-Pulse «Restaurar todo» en el panel, o abra «Directorios de datos» → «App Data», seleccione la app y use «Restaurar» en cada directorio de contenedor con estado «Enlazado». Como la app no puede abrirse, no bloqueará el control de app en ejecución.
-
-Este paso debe ir primero: la app reinstalada recupera el aislamiento y no puede leer los datos detrás de enlaces simbólicos. Seguiría pareciendo vacía, como si la reparación no hubiera funcionado.
-
-Después puede comprobarlo:
-
-```bash
-find ~/Library/Containers/<Bundle ID> -maxdepth 6 -type l -exec readlink {} \; 2>/dev/null
-# 没有输出，或输出里没有 /Volumes/... 就对了
-```
-
-### Paso 2: devolver la app al Mac
-
-Solo hace falta si la app está en el disco externo. En ese caso, `/Applications` contiene el lanzador de AppPorts. Instalar encima lo sobrescribiría y dejaría huérfana la copia externa. Pulse «Devolver a este Mac» en el panel o seleccione la app en «Unidad externa» y use esa opción. Después de reinstalar puede volver a migrar la app al disco externo.
-
-### Paso 3: reinstalar la app si no se abre
-
-Si la app funciona normalmente en 27, puede saltar al paso 4. Si necesita reinstalar, ciérrela por completo e instale encima desde una fuente oficial: App Store para sus apps, con el botón «Abrir App Store» del panel, o la web oficial para las demás. **No elimine los contenedores.** La reinstalación no los modifica; el historial y la sesión siguen ahí.
-
-Después pulse «Volver a comprobar» o use el primer comando de comprobación para confirmar una firma `Authority=Developer ID Application: ...` o `Apple Mac OS Application Signing`. La insignia «Firma sustituida» desaparece al restaurar la firma. Un análisis normal conserva las copias; solo una restauración completada mediante AppPorts elimina la copia correspondiente.
-
-::: tip Una copia completa permite restaurar; una antigua necesita la app original
-«Restaurar firma original» usa ahora una copia completa de la app original, sin clave privada del desarrollador. Los registros antiguos que solo contienen el nombre de la identidad no permiten restaurar directamente: elija un `.app` oficial de la misma versión o reinstale según los pasos anteriores. En todos los casos, restaure primero los contenedores migrados en modo clásico. Consulte [Copia de seguridad y restauración de la firma](/es/datamigrae/resign#copia-de-seguridad-y-restauracion-de-la-firma).
-:::
-
-### Paso 4, opcional: devolver los datos al disco externo mediante montaje
-
-Tras reinstalar, abra AppPorts. Los contenedores muestran «Migración por montaje» en vez de «Migrate». Pulse y siga las indicaciones. Al abrir la app por primera vez, **permita** acceder a volúmenes extraíbles. El disco debe ser APFS sin encriptar. AppPorts comprobará primero su situación e indicará qué hacer. Si no es APFS, puede dejar los datos en el Mac; consulte [Por qué APFS](/es/why-apfs#what-to-do).
+AppPorts solo indica sustitución si una copia registra una identidad original de desarrollador y la app real se confirma actualmente como Ad-hoc. Un tiempo de espera agotado o una app externa ilegible requieren repetir la comprobación. Una app originalmente Ad-hoc, su migración o un lanzador local no justifican volver a firmar.
 
 ## Qué no hacer
 
@@ -97,34 +61,65 @@ Tras reinstalar, abra AppPorts. Los contenedores muestran «Migración por monta
 | Añadir la app a Acceso total al disco | Puede evitar la comprobación del contenedor, pero los derechos del llavero ya se perdieron y la sesión sigue afectada. Solo sirve como medida temporal |
 | Considerar que abrir desde Terminal equivale a reparar | La app toma prestados los permisos de Terminal. Compruebe desde Finder / Dock |
 
+## Antes de actualizar: comprobar
+
+Revise primero las marcas «Firma sustituida» de AppPorts y siga la reparación anterior. La ausencia de avisos no garantiza compatibilidad con macOS 27. El script opcional solo comprueba rutas accesibles de copias antiguas; las apps movidas, discos desconectados y lanzadores pueden producir una lista incompleta.
+
+::: details Opcional: comprobaciones técnicas
+```bash
+BACKUP_DIR="$HOME/Library/Application Support/AppPorts/signature-backups"
+for plist in "$BACKUP_DIR"/*.plist; do
+  [ -f "$plist" ] || continue
+  original=$(/usr/libexec/PlistBuddy -c "Print :signingIdentity" "$plist" 2>/dev/null)
+  app=$(/usr/libexec/PlistBuddy -c "Print :originalPath" "$plist" 2>/dev/null)
+  case "$original" in ""|ad-hoc) continue ;; esac
+  [ -d "$app" ] || continue
+  if codesign -dv "$app" 2>&1 | grep -q "Signature=adhoc"; then
+    printf "%s\n    %s\n" "$app" "$original"
+  fi
+done
+```
+:::
+
+## Después de actualizar: confirmar los síntomas
+
+Abra primero desde Finder / Dock. Si falla y se confirma que la firma fue sustituida, siga la reparación anterior. En otros casos, compruebe también la versión, los permisos y el disco externo.
+
+::: details Opcional: comprobaciones técnicas
+Cambie el ejemplo por la **ruta de la app real**, no la de su lanzador. Estos comandos solo leen información. Compare Ad-hoc con la identidad original; un registro de acceso denegado es una pista, no una prueba de su causa.
+
+```bash
+codesign -dv --verbose=4 "/Applications/WeChat.app" 2>&1 | grep -E "Authority|TeamIdentifier|Signature"
+log show --last 1m --style compact 2>/dev/null | grep -i "rejected approval request"
+```
+:::
+
 ## Qué ha cambiado en AppPorts 1.8.2
 
-- Los contenedores usan [migración por montaje](/es/datamigrae/mount-migration), sin enlaces simbólicos, independientemente del aislamiento del programa principal.
-- Las apps aisladas no se vuelven a firmar desde el menú contextual, «Volver a firmar después de la migración» ni el script de inicio de sesión.
-- «Restaurar firma original» restaura la app original completa, su firma y derechos, sin clave privada; para registros antiguos permite elegir el original oficial de la misma versión.
-- Detecta firmas sustituidas: insignia roja «Firma sustituida», aviso al arrancar y panel «Ver los pasos de reparación».
-- Los enlaces antiguos de contenedores siguen apareciendo como «Enlazado» y «Restaurar» sigue disponible. «Normalizar» y «Volver a enlazar» se desactivan para evitar recrear enlaces simbólicos.
-- Se conserva un **modo clásico de migración de datos**, desactivado por defecto y con confirmación de riesgos, para quienes dependen del método antiguo. Consulte los [ajustes](/es/settings#classic-data-migration-mode). Tener un disco no APFS no exige activarlo: deje los datos de contenedores en el Mac.
+Estos comportamientos corresponden a la versión en desarrollo:
 
-Actualizar AppPorts no restaura automáticamente las apps ya firmadas de nuevo. Debe seguir los pasos anteriores.
+- El modo predeterminado migra contenedores mediante montaje APFS y rechaza volver a firmar apps aisladas.
+- Las copias completas restauran la app original. Los registros antiguos necesitan una app oficial coincidente.
+- Las sustituciones confirmadas y las comprobaciones no disponibles se muestran por separado; se conservan los materiales de recuperación.
+- El [modo clásico de migración de datos](/es/settings#classic-data-migration-mode) está desactivado por defecto. Actualizar AppPorts no restaura automáticamente una firma sustituida.
 
 ## Preguntas frecuentes
 
 ### Perderé el historial de conversaciones
 
-No. Reinstalar no afecta a los contenedores y la app sigue leyendo los datos existentes. AppPorts tampoco los elimina durante este proceso.
+Un error de firma no significa que el historial esté dañado. Conserve contenedores, datos externos y copias. Evite desinstaladores que borren datos. Compruebe el acceso tras reparar; quizá deba restablecer algunos permisos de inicio de sesión.
 
 ### He restaurado los datos pero la app sigue sin abrirse
 
-La firma aún no está reparada. Restaurar y reinstalar son dos pasos independientes y ambos son necesarios. Consulte [Reparación](#reparacion).
+Restaurar las rutas no recupera la firma del desarrollador. Restaure la app original desde una copia completa o reinstale oficialmente y compruebe de nuevo. Si una firma correcta no resuelve el fallo, revise versión y permisos.
 
 ### Solo le ocurre a WeChat
 
-No necesariamente. QQ Music, firmado de nuevo en el mismo Mac con 27, funciona. Las pruebas actuales apuntan a si existe un registro de autorización de la firma antigua, algo que no se puede predecir. Por eso se muestran todas las apps con firma sustituida para revisarlas. El script de [comprobación previa](#antes-de-actualizar-comprobar) da la lista completa.
+No. Las pruebas existentes muestran diferencias entre apps. El aviso señala un riesgo que comprobar, no predice que todas fallen.
 
 ### AppPorts ha dañado mis datos
 
-No; los datos están intactos. Sin embargo, la causa directa del fallo sí es la opción de aceptar una nueva firma de versiones antiguas. La versión 1.8.2 eliminó esa vía.
+Los fallos observados se relacionan con la antigua nueva firma y no demuestran corrupción. Conserve los originales al investigar otros problemas. La migración APFS normal de contenedores conserva las firmas.
 
 ## Documentación relacionada
 
