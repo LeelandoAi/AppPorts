@@ -4,7 +4,7 @@ outline: deep
 
 # Journalisation et diagnostic
 
-AppPorts dispose d'un système de journalisation intégré qui enregistre les événements clés, les opérations de migration, les informations système et les détails d'erreur pendant l'exécution de l'application. En cas de problèmes, vous pouvez exporter un package de diagnostic et le soumettre sur la page [Issues](https://github.com/wzh4869/AppPorts/issues) du projet pour le dépannage.
+AppPorts dispose d'un système de journalisation intégré qui enregistre les événements clés, les opérations de migration, les informations système et les détails d'erreur pendant l'exécution de l'application. En cas de problèmes, vous pouvez exporter un paquet de diagnostic et le soumettre sur la page [Issues](https://github.com/wzh4869/AppPorts/issues) du projet pour le dépannage.
 
 ## Contenu journalisé
 
@@ -28,7 +28,7 @@ Les informations suivantes sont enregistrées à chaque démarrage de l'applicat
 |---------|-------------|
 | Version de l'application | Numéro de version et numéro de build |
 | Version de macOS | Version du système et nom commercial (par ex., « macOS Sequoia 15.x ») |
-| Modèle de l'appareil | Modèle et nom convivial (par ex., « MacBook Pro (14 pouces, M3 Pro, 2023) ») |
+| Modèle de l'appareil | Modèle et nom convivial (par ex., « MacBook Pro (14-inch, M3 Pro, 2023) ») |
 | Informations processeur | Chaîne de marque, nombre de cœurs, nombre de cœurs actifs |
 | Mémoire physique | Mémoire totale |
 
@@ -63,7 +63,7 @@ Chaque opération de migration génère un ID d'opération unique (par ex., `dat
 | Nom de l'application | Nom de l'application migrée |
 | Taille des données | Volume de données migré |
 | Durée | Durée de la migration (secondes) |
-| Vitesse de transfert | Taux de transfert (Mo/s) |
+| Vitesse de transfert | Taux de transfert (MB/s) |
 | Chemin source / Chemin de destination | Chemins de début et fin de la migration |
 
 ### Détails des erreurs
@@ -83,12 +83,20 @@ Les journaux d'erreur contiennent des informations structurées :
 
 ### Codes d'erreur
 
-| Code d'erreur | Signification |
-|---------------|---------------|
+| Code d’erreur | Signification |
+|--------|------|
 | `BACKUP-SIGNATURE-FAILED` | Échec de la sauvegarde de signature |
-| `RESIGN-FAILED` | Échec de la re-signature (l'application peut ne pas passer la vérification de signature macOS) |
-| `DATA-RESIGN-FAILED` | Échec de la re-signature automatique après migration du répertoire de données |
-| `DATA-BACKUP-SIGNATURE-FAILED` | Échec de la sauvegarde de signature avant migration du répertoire de données (la signature originale ne pourra pas être restaurée ultérieurement) |
+| `APP-MOVE-DESTINATION-CONFLICT` | La destination de migration de l’application existe déjà et son remplacement ne peut pas être confirmé comme sûr |
+| `APP-RESTORE-LOCAL-CONFLICT` | Un élément local de même nom ne peut pas être écrasé automatiquement lors du retour sur le Mac |
+| `DATA-MIGRATE-DESTINATION-CONFLICT` | La destination de migration du répertoire existe déjà et ses métadonnées ne correspondent pas entièrement |
+| `RESIGN-FAILED` | Échec de la nouvelle signature ; l’application peut échouer à la vérification de signature de macOS |
+| `DATA-RESIGN-FAILED` | Échec de la nouvelle signature automatique après migration du répertoire de données |
+| `RESIGN-REFUSED-SANDBOXED` | Nouvelle signature refusée pour une application en bac à sable |
+| `RESTORE-SIGNATURE-IDENTITY-UNAVAILABLE` | Certificat de signature d’origine absent de ce Mac ; restauration refusée |
+| `CONTAINER-MOUNT-*` | Échec à une étape de migration par montage, par exemple `CONTAINER-MOUNT-EXTERNAL-NOT-APFS` ou `CONTAINER-MOUNT-SWITCH-FAILED` |
+| `CONTAINER-RESTORE-*` | Échec à une étape de restauration d’un répertoire migré par montage |
+| `DATA-BACKUP-SIGNATURE-FAILED` | Échec de la sauvegarde de signature avant migration du répertoire de données ; une restauration ultérieure ne pourra pas utiliser l’identité d’origine |
+
 
 ### Contexte des opérations de répertoire de données
 
@@ -97,7 +105,7 @@ Les opérations sur les répertoires de données (migration, restauration, norma
 | Champ | Description |
 |-------|-------------|
 | `app_name` | Nom de l'application associée |
-| `app_status` | Statut de l'application (Liée, Locale, etc.) |
+| `app_status` | Statut de l'application (« Lié », « Local », etc.) |
 | `app_is_resigned` | Si l'application a été re-signée |
 | `app_bundle_id` | Bundle ID de l'application (lu depuis le vrai chemin) |
 | `app_real_path` | Vrai chemin externe de l'application |
@@ -127,15 +135,15 @@ Chemin par défaut du journal :
 
 Peut être personnalisé via :
 
-- Barre de menus → Journaux → Définir l'emplacement du journal
-- Réglages → Réglages de journalisation → Chemin personnalisé
+- Barre de menus → Journaux → Définir l'emplacement du journal...
+- Paramètres → Paramètres du journal → chemin personnalisé
 
 ### Format du journal
 
 ```text
-[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] Application démarrée
+[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] 应用启动
 [2026-05-08 09:30:01] [DIAG] [session:a1b2c3d4] [pid:12345]   app_version: 1.6.1 (123)
-[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   Migration terminée : 2.3 Go, 45.2 Mo/s, 52.1s
+[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   迁移完成: 2.3 GB, 45.2 MB/s, 52.1s
 ```
 
 ### Niveaux de journal
@@ -153,31 +161,31 @@ Peut être personnalisé via :
 
 ### Rotation des journaux
 
-- Taille maximale par défaut : **2 Mo** (configurable : 1 Mo, 5 Mo, 10 Mo, 50 Mo, 100 Mo)
+- Taille maximale par défaut : **2 MB** (configurable : 1 MB, 5 MB, 10 MB, 50 MB, 100 MB)
 - Troncation automatique en cas de dépassement : Supprime la moitié la plus ancienne des lignes, conserve la moitié la plus récente
 
-## Exporter le package de diagnostic
+## Exporter le paquet de diagnostic
 
-Lorsque des problèmes nécessitent un retour, veuillez exporter un package de diagnostic et le joindre à l'Issue.
+Lorsque des problèmes nécessitent un retour, veuillez exporter un paquet de diagnostic et le joindre à l'Issue.
 
 ### Méthodes d'exportation
 
 **Méthode 1 : Barre de menus**
 
-1. Cliquer sur Barre de menus → Journaux → Exporter le package de diagnostic
+1. Cliquer sur Barre de menus → Journaux → Exporter le paquet de diagnostic
 2. Choisir l'emplacement de sauvegarde
 3. Le système génère automatiquement un fichier `.zip` et l'ouvre dans le Finder
 
 **Méthode 2 : Page des réglages**
 
-1. Ouvrir AppPorts → Réglages (coin supérieur droit)
-2. Trouver la section « Réglages de journalisation »
-3. Cliquer sur le bouton « Exporter le package de diagnostic »
+1. Ouvrir AppPorts → Paramètres (coin supérieur droit)
+2. Trouver la section « Paramètres du journal »
+3. Cliquer sur le bouton « Exporter le paquet de diagnostic »
 4. Choisir l'emplacement de sauvegarde
 
-### Contenu du package de diagnostic
+### Contenu du paquet de diagnostic
 
-Le fichier `AppPorts-Diagnostic-<datetime>.zip` exporté contient :
+Le fichier `AppPorts-Diagnostic-<日期时间>.zip` exporté contient :
 
 | Fichier | Format | Description |
 |---------|--------|-------------|
@@ -185,11 +193,11 @@ Le fichier `AppPorts-Diagnostic-<datetime>.zip` exporté contient :
 | `diagnostic-summary.txt` | Texte brut | Résumé de diagnostic lisible par l'humain |
 | `recent-operations.json` | JSON | 100 enregistrements d'opérations les plus récents |
 | `recent-failures.json` | JSON | 20 opérations échouées/avec avertissement les plus récentes |
-| `AppPorts_Log.share-safe.txt` | Texte brut | Journal complet (révisé) |
+| `AppPorts_Log.share-safe.txt` | Texte brut | Journal complet (anonymisé) |
 
 ### Protection de la vie privée
 
-Les fichiers journaux du package de diagnostic sont révisés :
+Les fichiers journaux du paquet de diagnostic sont anonymisés :
 
 | Contenu original | Remplacé par |
 |------------------|--------------|
@@ -199,14 +207,14 @@ Les fichiers journaux du package de diagnostic sont révisés :
 
 ## Soumettre des Issues
 
-Après avoir obtenu le package de diagnostic, suivez ces étapes pour soumettre :
+Après avoir obtenu le paquet de diagnostic, suivez ces étapes pour soumettre :
 
 1. Visiter la page [Issues](https://github.com/wzh4869/AppPorts/issues) du projet
 2. Cliquer sur « New Issue », sélectionner le modèle de rapport de bug
 3. Décrire le problème et les étapes de reproduction
-4. Glisser le fichier `.zip` de diagnostic dans la zone de pièce jointe pour télécharger
+4. Glisser le fichier `.zip` de diagnostic dans la zone des pièces jointes pour le joindre
 5. Soumettre l'Issue
 
 ::: tip 💡 Améliorer l'efficacité des retours
-Soumettre des Issues avec des packages de diagnostic peut accélérer significativement la résolution des problèmes. Le package de diagnostic contient l'historique complet des opérations, les détails d'erreur et les informations d'environnement système, permettant aux développeurs de reproduire et analyser les problèmes sans communication répétée.
+Soumettre des Issues avec des paquets de diagnostic peut accélérer significativement la résolution des problèmes. Le paquet de diagnostic contient l'historique complet des opérations, les détails d'erreur et les informations d'environnement système, permettant aux développeurs de reproduire et analyser les problèmes sans communication répétée.
 :::

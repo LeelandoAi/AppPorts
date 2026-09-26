@@ -4,8 +4,8 @@ layout: home
 
 hero:
   name: "AppPorts"
-  text: "Outil de migration d'app"
-  tagline: "Outil de migration d'applications pour macOS"
+  text: "Les disques externes sauvent le monde"
+  tagline: "Déplacez les applications volumineuses et les répertoires de données vers le stockage externe, créez automatiquement leurs entrées locales et libérez de l’espace sur votre Mac"
   actions:
     - theme: brand
       text: "Démarrage rapide"
@@ -20,14 +20,14 @@ hero:
 
 features:
   - icon: 🔄
-    title: "Migration sans badge"
-    details: "Migration en un clic des grandes applications vers les disques externes. Pas de flèches de raccourci dans Finder ; Launchpad et le menu de l'app fonctionnent normalement."
+    title: "Migration sans flèche de raccourci"
+    details: "Déplacez les applications volumineuses vers le stockage externe en un clic. Seule une enveloppe de lancement légère reste en local ; Finder n’affiche pas de flèche de raccourci, et Launchpad ainsi que les menus d’applications fonctionnent normalement."
   - icon: 🔒
-    title: "Protection contre les mises à jour"
-    details: "Détecte automatiquement les apps Sparkle et Electron à mise à jour automatique. La migration verrouillée empêche les mises à jour de corrompre les apps externes."
+    title: "Protection contre les mises à jour automatiques"
+    details: "AppPorts détecte les applications à mise à jour automatique comme Sparkle et Electron, et propose « Migration verrouillée ». Une application locale plus récente que sa copie externe reçoit le badge « Sortie en attente »."
   - icon: 📦
     title: "Gestion des répertoires de données"
-    details: "Migrez les sous-répertoires ~/Library/, ~/.npm et plus vers le stockage externe avec vue arborescente, recherche et tri."
+    details: "Déplacez les sous-répertoires de ~/Library/, ~/.npm et d’autres données vers le stockage externe. Les données de conteneurs en bac à sable, comme l’historique WeChat, sont migrées par montage sur un disque externe APFS, sans modifier la signature."
 ---
 
 <script setup lang="ts">

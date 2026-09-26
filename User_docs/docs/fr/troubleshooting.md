@@ -4,100 +4,99 @@ outline: deep
 
 # Dépannage
 
-## Interruption de la migration
+## L’icône apparaît puis disparaît au double-clic
 
-### Symptômes
+La cause la plus fréquente est une application re-signée par AppPorts, à laquelle macOS 27 refuse l’accès à son conteneur après mise à niveau. Cela ne touche pas toutes les applications re-signées, mais WeChat est confirmé. Les données sont intactes.
 
-Migration interrompue en raison de la déconnexion du stockage externe, d'un crash système ou de la fermeture forcée de l'application.
+Pour vérifier :
 
-### Résolution
+```bash
+codesign -dv --verbose=4 /Applications/<应用名>.app 2>&1 | grep -E "Signature|TeamIdentifier"
+# 出现 Signature=adhoc 和 TeamIdentifier=not set 即是
+```
 
-AppPorts dispose d'un mécanisme de récupération automatique intégré. Après le redémarrage d'AppPorts :
+Réparation : restaurer les données de conteneur → réinstaller depuis une source officielle → migrer par montage si nécessaire. **Ne re-signez pas encore** et ne considérez pas la seule restauration des données comme une réparation. Voir les [étapes macOS 27](/fr/macos-27#reparation).
 
-1. Détecte les données de migration résiduelles (la copie externe existe mais le lien symbolique local n'est pas créé)
-2. Vérifie `.appports-link-metadata.plist` dans le répertoire externe
-3. Continue la récupération ou la re-liaison uniquement si `schemaVersion`, `managedBy`, `sourcePath`, `destinationPath` et `dataDirType` correspondent complètement
-4. Si les métadonnées ne correspondent pas, arrête le traitement automatique et conserve les données existantes pour confirmation
+## Échec de migration par montage
 
-::: tip 💡 Aucune intervention manuelle nécessaire
-Le mécanisme de récupération automatique d'AppPorts gère les migrations interrompues au lancement suivant. Si la récupération automatique échoue, vous pouvez voir les statuts « Nécessite une normalisation » ou « Nécessite une re-liaison » dans la liste des répertoires de données — exécutez simplement l'opération correspondante manuellement.
-:::
+| Message | Cause | Action |
+|------|------|------|
+| Stockage externe non APFS | Disque exFAT / NTFS / HFS+ | Gardez la situation actuelle : conteneurs locaux, autres données migrées normalement. Pour les conteneurs, choisissez un disque APFS ou suivez la [préparation](/fr/why-apfs#prepare-apfs). Les outils intégrés ne réduisent pas directement exFAT |
+| Stockage externe chiffré | APFS chiffré dont le nouveau volume n’hériterait pas du mot de passe | Gardez en l’état ou choisissez APFS non chiffré ; voir [Disques chiffrés](/fr/why-apfs#encrypted-drives) |
+| Espace insuffisant | Disque externe trop plein pour migrer, ou espace local insuffisant pour restaurer | Libérez de l’espace et réessayez. Le contrôle précède la création du volume ou la copie ; aucune donnée n’a changé |
+| Échec de commande disque … `kDAReturnNotPrivileged` | Un ancien système, comme macOS 12, interdit à l’utilisateur ordinaire le montage sur un chemin personnalisé | AppPorts réessaie avec un dialogue administrateur. Saisissez le mot de passe ; cette étape n’existait pas avant 1.8.2 |
+| Autorisation administrateur annulée | Dialogue de mot de passe annulé | Relancez l’opération |
+| Point de montage non vide | L’application a écrit des fichiers localement pendant l’absence du volume | Déplacez-les puis cliquez sur « Monter » |
+| Vérification après montage échouée | Le volume est monté au mauvais endroit | Exportez un diagnostic et ouvrez une Issue |
+| Volume externe introuvable | Disque absent ou volume supprimé | Reconnectez et actualisez ; si le volume a été supprimé, les données ne sont pas récupérables |
+
+Lors d’un échec, AppPorts supprime le nouveau volume et remet le répertoire d’origine en place. Vous pouvez vérifier dans Utilitaire de disque qu’aucun volume `AppPorts-` résiduel ne subsiste.
+
+## L’application ne voit pas les données après migration par montage
+
+Vérifiez dans cet ordre :
+
+1. **Connexion du disque et montage du volume** : dans « App Data », le répertoire doit être « Monté ». Pour « En attente de montage », cliquez sur « Monter » ; pour « Disque externe déconnecté », connectez le disque.
+2. **Autorisation refusée** : ouvrez Réglages Système → Confidentialité et sécurité → Fichiers et dossiers, puis activez Volumes amovibles pour l’application. Sinon, exécutez `tccutil reset SystemPolicyRemovableVolumes <Bundle ID>` dans Terminal pour renouveler la demande.
+3. **Application système** : les applications sous `/System/Applications` sont refusées sans dialogue. AppPorts ne migre pas leurs données.
+4. Consultez les journaux système :
+
+   ```bash
+   log show --last 2m --style compact 2>/dev/null | grep -E "deny\(1\)|RemovableVolumes"
+   ```
+
+   `kTCCServiceSystemPolicyRemovableVolumes` correspond au point 2.
+
+## L’application ne démarre pas après migration
+
+1. Vérifiez que le disque externe est connecté.
+2. « Lien orphelin » indique une application externe manquante ; supprimez le lien.
+3. Si l’application est dite endommagée, essayez d’abord une réinstallation, puis envisagez « Resigner cette app ». Les applications en bac à sable sont refusées ; voir [Re-signature et prévention des plantages](/fr/datamigrae/resign).
+4. Le verrouillage `uchg` peut empêcher l’actualiseur de fonctionner ; c’est attendu.
+5. Ouvrez la barre des menus → Journaux → Voir dans le Finder et cherchez les erreurs.
+6. Choisissez « Ramener sur ce Mac » dans la bibliothèque externe pour déterminer si le disque est en cause.
+
+## Échec de restauration de la signature
+
+| Cause | Action |
+|------|------|
+| Sauvegarde absente | Aucun enregistrement utilisable : réinstallez depuis une source officielle. Un enregistrement a pu être nettoyé ; son absence ne prouve pas l’absence de re-signature |
+| Ancienne sauvegarde sans application d’origine | Choisissez un `.app` officiel de même version ou réinstallez. Une sauvegarde complète récente ne demande pas de clé privée |
+| Application mise à jour ou sauvegarde non valide | Conserver application et sauvegarde sans écraser ; choisir un original officiel correspondant ou réinstaller |
+| Application protégée et impossible à remplacer | Conserver application et sauvegarde ; réinstaller avec l’App Store ou l’installateur officiel |
+| Application appartenant à root | Un dialogue administrateur demande de changer le propriétaire ; l’annulation fait échouer l’opération |
+| Application en bac à sable | Re-signature refusée par défaut. Après re-signature en mode classique, restaurez les conteneurs avant la signature d’origine |
+
+## Migration interrompue
+
+Après déconnexion du disque, panne système ou fermeture forcée d’AppPorts :
+
+- **Lien symbolique** : rouvrez AppPorts. Il vérifie `.appports-link-metadata.plist` sur le disque externe et reprend si tout correspond ; sinon, il attend votre intervention. Recherchez « Normalisation requise » ou « En attente de reconnexion ».
+- **Montage** : un échec en cours d’opération est automatiquement annulé. Si AppPorts a été forcé à quitter, rouvrez-le : si le répertoire d’origine existe encore, il est intact et les volumes `AppPorts-` supplémentaires peuvent être supprimés dans Utilitaire de disque. S’il a été renommé `.appports-migration-backup-*`, remettez son nom initial.
 
 ## Stockage externe hors ligne
 
-### Symptômes
+- Répertoires migrés par lien symbolique : le lien pointe vers un chemin indisponible et l’application ne lit pas les données.
+- Répertoires migrés par montage : ils apparaissent vides et l’application n’écrit pas localement.
+- Application : le lanceur ne peut pas ouvrir l’application externe, mais ne plante pas lui-même.
 
-Après la déconnexion ou le débranchement du stockage externe, les applications migrées ne peuvent pas se lancer et les répertoires de données affichent un statut d'erreur rouge.
+AppPorts relance automatiquement l’analyse après reconnexion et remonte les volumes migrés. Les anciens systèmes demandent une fois le mot de passe administrateur.
 
-### Résolution
+## Impossible de migrer une application App Store vers le disque externe
 
-1. Reconnecter le stockage externe
-2. Le `FolderMonitor` d'AppPorts détecte automatiquement le montage du volume de stockage et déclenche une nouvelle analyse
-3. Les applications et répertoires de données reprennent un usage normal
+**Avant macOS 15.1** : l’installation externe native n’est pas disponible. Activez la migration App Store dans les réglages d’AppPorts et migrez manuellement, puis recommencez après les mises à jour.
 
-::: warning ⚠️ Note
-Pendant que le stockage externe est hors ligne, les entrées locales (Stub Portal) appelant `open` échoueront ; les applications ne pourront pas se lancer mais ne planteront pas. Les liens symboliques des répertoires de données pointent vers des chemins invalides ; les applications associées peuvent ne pas être en mesure de lire les données.
-:::
-
-## Échec de restauration de signature
-
-### Symptômes
-
-La tentative de restauration de la signature originale échoue, ou l'application affiche toujours « Endommagé » après la restauration.
-
-### Causes possibles et résolution
-
-| Cause | Résolution |
-|-------|-----------|
-| Le fichier de sauvegarde n'existe pas | Impossible de restaurer la signature originale ; exécuter la re-signature Ad-hoc comme alternative |
-| Le certificat de développeur original n'est pas dans le Keychain local | AppPorts revient automatiquement à la signature Ad-hoc ; l'application peut se lancer mais l'accès Keychain peut être anormal |
-| Application Mac App Store (protection SIP | Impossible de re-signer ; SIP empêche toute modification des signatures d'applications système |
-| Le répertoire d'appartient à root | AppPorts tente de changer la propriété via les privilèges admin ; autoriser dans la fenêtre popup |
-| Cible du lien symbolique Contents perdue | Impossible de signer ; doit restaurer les données externes ou restaurer l'application d'abord |
-
-Pour les mécanismes détaillés, voir [Re-signature et prévention des plantages](/fr/datamigrae/resign).
-
-## Les applications App Store ne peuvent pas être migrées vers un disque externe
-
-### Versions macOS inférieures à 15.1
-
-Les versions macOS antérieures à 15.1 ne supportent pas l'installation d'applications App Store sur des disques externes. Vous devez :
-
-1. Activer « Migration des applications App Store » dans les réglages d'AppPorts
-2. Après la migration, les mises à jour d'applications nécessitent une re-migration manuelle pour écraser
-
-### macOS 15.1 et supérieur
-
-Si l'App Store ne peut pas mettre à jour les applications sur les disques externes :
-
-1. Ouvrir les réglages de l'App Store
-2. Activer « Télécharger et installer les grandes applications sur un disque externe »
-3. Sélectionner le même stockage externe que la bibliothèque de stockage externe d'AppPorts
-
-## L'application ne peut pas se lancer après la migration
-
-### Étapes de dépannage
-
-1. **Vérifier la connexion du stockage externe** : Confirmer que le stockage externe est connecté et accessible
-2. **Vérifier les badges de statut de l'application** :
-   - « Lien orphelin » → Application externe perdue ; suppression manuelle du lien requise
-   - « Endommagé » → Exécuter la re-signature
-3. **Vérifier le statut de verrouillage** : Si l'application est verrouillée (uchg), le programme de mise à jour automatique peut ne pas pouvoir s'exécuter
-4. **Vérifier les journaux** : Barre de menus → Journaux → Voir dans le Finder ; rechercher les messages d'erreur pertinents
-5. **Déplacer vers le local** : Dans la bibliothèque Applications externes, sélectionner « Déplacer vers le local » pour confirmer s'il s'agit d'un problème de stockage externe
+**macOS 15.1 et ultérieurs** : dans les réglages de l’App Store, activez « Télécharger et installer les apps volumineuses sur un disque distinct » et choisissez le même disque qu’AppPorts.
 
 ## La destination existe déjà
 
-AppPorts ne remplace automatiquement une destination d'application que si l'application est en état « Migration sortante en attente », ou si la destination est reconnue comme ancien portail/résidu géré par AppPorts. Les répertoires de données exigent une correspondance complète des métadonnées AppPorts. Les applications ou dossiers réels sans lien confirmé ne sont pas écrasés et sont signalés comme conflit.
+- **Application** : AppPorts s’arrête si le fichier externe n’est ni l’ancienne copie correspondant à « Sortie en attente », ni un ancien lanceur reconnu. Identifiez la destination dans Finder avant de décider.
+- **Données** : sans marqueur correspondant, AppPorts ne prend pas automatiquement le contrôle du répertoire et ne l’écrase pas sur la seule base de sa taille. Vérifiez puis traitez-le manuellement.
+- **Retour local** : aucune application réelle homonyme ni aucun lien appartenant à une autre application externe ne sont écrasés.
 
-## Problèmes d'affichage des répertoires de données
+## Affichage incorrect des répertoires de données
 
-### Symptômes
-
-La liste des répertoires de données affiche un statut incomplet ou incorrect.
-
-### Résolution
-
-1. AppPorts utilise `FolderMonitor` pour surveiller les changements du système de fichiers ; il se rafraîchit généralement automatiquement
-2. Si non rafraîchi automatiquement, basculer vers un autre onglet puis revenir pour déclencher une nouvelle analyse
-3. Si le problème persiste, vérifier les messages d'erreur d'analyse dans les journaux
+1. AppPorts surveille le système de fichiers et actualise normalement automatiquement.
+2. En changeant rapidement d’application, les anciens résultats ne remplacent pas les nouveaux. Si la liste est momentanément vide, attendez la fin de l’analyse.
+3. Sinon, cliquez sur le bouton d’actualisation en haut.
+4. Si le problème persiste, recherchez les erreurs d’analyse dans les journaux.

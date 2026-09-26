@@ -2,98 +2,97 @@
 outline: deep
 ---
 
-# Implémentation de base de la migration des données
+# Fonctionnement de la migration des données
 
 ![](https://pic.cdn.shimoko.com/appports/%E6%88%AA%E5%B1%8F2026-05-08%2008.38.05.png)
 
-La fonctionnalité de migration des données d'AppPorts migre les répertoires de données associés aux applications (tels que `~/Library/Application Support`, `~/Library/Caches`, etc.) vers le stockage externe pour libérer de l'espace disque local.
+La migration des données d’AppPorts déplace les répertoires associés aux applications vers un disque externe pour libérer de l’espace local. Deux stratégies sont utilisées selon leur emplacement :
 
-## Stratégie principale : Lien symbolique
+| Répertoire | Stratégie | Raison |
+|------|------|------|
+| `~/Library/Containers/`, `~/Library/Group Containers/` | Migration par montage | Le bac à sable vérifie le chemin réel résolu et refuse les liens symboliques qui sortent du conteneur |
+| Autres sous-répertoires de `~/Library/`, répertoires d’outils et dossiers personnalisés | Lien symbolique | La solution la plus simple, sans restriction du bac à sable |
 
-La migration des répertoires de données utilise la stratégie **Whole Symlink** :
+Cette page décrit les liens symboliques. Pour l’autre stratégie, consultez [Migration par montage](/fr/datamigrae/mount-migration).
 
-1. Copier l'intégralité du répertoire local original vers le stockage externe
-2. Écrire les métadonnées de lien géré (`.appports-link-metadata.plist`) dans le répertoire externe
-3. Renommer le répertoire local original en sauvegarde de sécurité cachée sur le même volume
-4. Créer un lien symbolique à l'emplacement d'origine pointant vers la copie externe
-5. Nettoyer la sauvegarde locale après la création réussie du lien symbolique
+## Stratégie des liens symboliques
+
+1. Copier intégralement le répertoire local sur le disque externe.
+2. Écrire le marqueur de gestion `.appports-link-metadata.plist` dans le répertoire externe.
+3. Renommer le répertoire local d’origine en sauvegarde de sécurité masquée sur le même volume.
+4. Créer au chemin d’origine un lien symbolique vers la copie externe.
+5. Supprimer la sauvegarde de sécurité une fois le lien créé.
 
 ```
 ~/Library/Application Support/SomeApp
-    → /Volumes/External/AppPortsData/SomeApp  (symlink)
+    → /Volumes/External/AppPortsData/SomeApp  （符号链接）
 ```
-
-## Flux de migration
 
 ```mermaid
 flowchart TD
-    A[Sélectionner le répertoire de données] --> B{Vérification des permissions et de la protection}
-    B -->|Échec| Z[Terminer]
-    B -->|Réussi| C{Détection de conflit de chemin cible}
-    C -->|Métadonnées gérées présentes| D[Mode de récupération automatique]
-    C -->|Pas de conflit| E[Copier vers le stockage externe]
+    A[Choisir un répertoire de données] --> B{Vérifier les permissions et protections}
+    B -->|Échec| Z[Arrêter]
+    B -->|Réussite| C{Rechercher un conflit de destination}
+    C -->|Marqueur de gestion identique| D[Mode de reprise automatique]
+    C -->|Conflit avec un répertoire réel| Y[Arrêter et signaler le conflit]
+    C -->|Aucun conflit| E[Copier sur le disque externe]
     D --> E
-    E --> F[Écrire les métadonnées de lien géré]
-    F --> G[Renommer le répertoire local en sauvegarde]
+    E --> F[Écrire le marqueur de gestion]
+    F --> G[Renommer en sauvegarde locale de sécurité]
     G -->|Échec| H[Conserver la copie externe et arrêter]
-    G -->|Réussi| I[Créer le lien symbolique]
+    G -->|Réussite| I[Créer le lien symbolique]
     I -->|Échec| J[Restaurer la sauvegarde locale et conserver la copie externe]
-    I -->|Réussi| K[Nettoyer la sauvegarde locale]
-    K -->|Réussi| L[Migration terminée]
-    K -->|Échec| M[Migration terminée ; sauvegarde conservée]
+    I -->|Réussite| K[Supprimer la sauvegarde locale]
+    K -->|Réussite| L[Migration terminée]
+    K -->|Échec| M[Migration terminée avec sauvegarde conservée]
 ```
 
-## Métadonnées de lien géré
+## Marqueur de gestion
 
-AppPorts écrit un fichier `.appports-link-metadata.plist` dans le répertoire externe pour identifier que le répertoire est géré par AppPorts. Les métadonnées incluent :
+Le fichier `.appports-link-metadata.plist` dans le répertoire externe indique qu’AppPorts le gère :
 
 | Champ | Description |
-|-------|-------------|
-| `schemaVersion` | Numéro de version des métadonnées (actuellement 1) |
-| `managedBy` | Identifiant du gestionnaire (`com.shimoko.AppPorts`) |
-| `sourcePath` | Chemin local original |
-| `destinationPath` | Chemin cible du stockage externe |
+|------|------|
+| `schemaVersion` | Numéro de version, actuellement 1 |
+| `managedBy` | `com.shimoko.AppPorts` |
+| `sourcePath` | Chemin local d’origine |
+| `destinationPath` | Chemin de destination externe |
 | `dataDirType` | Type de répertoire de données |
 
-Ces métadonnées sont utilisées lors de l'analyse pour distinguer les liens gérés par AppPorts des liens symboliques créés par l'utilisateur, et supportent la récupération automatique en cas d'interruption de la migration.
+Lors de l’analyse, ce marqueur distingue les liens créés par AppPorts de ceux créés par l’utilisateur. Il permet aussi de reprendre une migration interrompue. La correspondance est stricte : les cinq champs doivent être identiques pour reprendre un répertoire géré. Sinon, il s’agit d’un conflit. Une taille similaire ne suffit jamais à reprendre la gestion ou à écraser les données.
 
-La récupération automatique utilise une correspondance stricte. Quand la cible externe existe déjà, AppPorts ne la traite comme récupérable que si `schemaVersion`, `managedBy`, `sourcePath`, `destinationPath` et `dataDirType` correspondent à l'opération actuelle. Un vrai répertoire sans métadonnées correspondantes est traité comme un conflit ; AppPorts ne récupère ni ne reprend un répertoire sur la seule base d'une taille similaire.
+La reconnexion et la normalisation concernent uniquement les répertoires. Un fichier ordinaire externe ne sera pas relié comme s’il s’agissait d’un répertoire.
 
-La re-liaison et la normalisation ne s'appliquent qu'aux répertoires. AppPorts rejette les fichiers ordinaires externes au lieu de les relier ou de les déplacer comme des répertoires de données, ce qui évite qu'un fichier soit remplacé par un lien symbolique local.
+## Types de répertoires de données pris en charge
 
-## Types de répertoires de données supportés
+| Type | Chemin | Stratégie |
+|------|------|------|
+| `applicationSupport` | `~/Library/Application Support/` | Lien symbolique |
+| `preferences` | `~/Library/Preferences/` | Lien symbolique |
+| `containers` | `~/Library/Containers/` | Montage |
+| `groupContainers` | `~/Library/Group Containers/` | Montage |
+| `caches` | `~/Library/Caches/` | Lien symbolique |
+| `webKit` | `~/Library/WebKit/` | Lien symbolique |
+| `httpStorages` | `~/Library/HTTPStorages/` | Lien symbolique |
+| `applicationScripts` | `~/Library/Application Scripts/` | Lien symbolique |
+| `logs` | `~/Library/Logs/` | Lien symbolique |
+| `savedState` | `~/Library/Saved Application State/` | Lien symbolique |
+| `dotFolder` | `~/.npm`, `~/.vscode`, etc. | Lien symbolique |
+| `custom` | Chemin défini par l’utilisateur | Lien symbolique |
 
-| Type | Exemple de chemin |
-|------|-------------------|
-| `applicationSupport` | `~/Library/Application Support/` |
-| `preferences` | `~/Library/Preferences/` |
-| `containers` | `~/Library/Containers/` |
-| `groupContainers` | `~/Library/Group Containers/` |
-| `caches` | `~/Library/Caches/` |
-| `webKit` | `~/Library/WebKit/` |
-| `httpStorages` | `~/Library/HTTPStorages/` |
-| `applicationScripts` | `~/Library/Application Scripts/` |
-| `logs` | `~/Library/Logs/` |
-| `savedState` | `~/Library/Saved Application State/` |
-| `dotFolder` | `~/.npm`, `~/.vscode`, etc. |
-| `custom` | Chemin défini par l'utilisateur |
+## Procédure de restauration
 
-## Flux de restauration
+1. Vérifier que le chemin local est un lien symbolique vers un répertoire externe valide.
+2. Copier le répertoire externe dans un répertoire temporaire local.
+3. Supprimer le lien symbolique et renommer le répertoire temporaire avec le chemin d’origine.
+4. Supprimer le répertoire externe, dans la mesure du possible.
 
-1. Vérifier que le chemin local est un lien symbolique pointant vers un répertoire externe valide
-2. Supprimer le lien symbolique local
-3. Copier le répertoire externe vers le local
-4. Supprimer le répertoire externe (dans la mesure du possible)
+Si la copie échoue, le lien symbolique reste intact. Si le renommage échoue, le lien est recréé et le répertoire temporaire est conservé pour une restauration manuelle.
 
-Si la copie échoue, reconstruit automatiquement le lien symbolique pour maintenir la cohérence.
+## Gestion des erreurs et retour arrière
 
-## Gestion des erreurs et annulation
-
-Chaque étape critique du processus de migration inclut des mécanismes d'annulation :
-
-- **Échec de la copie** : Aucune action supplémentaire ; nettoyage des fichiers externes copiés
-- **Échec du déplacement vers la sauvegarde locale** : La migration s'arrête et conserve la copie externe ; la source locale n'est pas supprimée
-- **Échec de la création du lien symbolique** : AppPorts tente de restaurer la sauvegarde locale vers le chemin d'origine et conserve la copie externe pour éviter de perdre les deux côtés
-- **Échec du nettoyage de la sauvegarde** : La migration est tout de même considérée comme terminée ; un dossier `.appports-migration-backup-*` reste en local et peut être supprimé manuellement après vérification
-
-Cette conception garantit l'absence de perte de données et un état système cohérent en cas d'échec à n'importe quelle étape.
+- **Échec de copie** : supprimer les fichiers externes déjà copiés et ne pas poursuivre.
+- **Conflit de destination** : si un répertoire réel existe et que son marqueur ne correspond pas, arrêter et conserver les données des deux côtés.
+- **Échec du renommage en sauvegarde** : arrêter et conserver la copie externe, sans toucher au répertoire source local.
+- **Échec de création du lien symbolique** : remettre la sauvegarde au chemin d’origine tout en conservant la copie externe.
+- **Échec du nettoyage de la sauvegarde** : la migration est terminée, mais la sauvegarde locale `.appports-migration-backup-*` reste présente. Vous pouvez la supprimer manuellement après vérification.

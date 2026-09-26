@@ -6,141 +6,91 @@ outline: deep
 
 ![](https://pic.cdn.shimoko.com/appports/%E6%88%AA%E5%B1%8F2026-05-08%2008.38.37.png)
 
-## Pourquoi les applications peuvent planter après la migration des données
+::: warning Re-signer n’est pas une réparation universelle
+Une re-signature Ad-hoc remplace la signature du développeur et retire les autorisations de bac à sable, de groupes d’applications et de trousseau. Une application en bac à sable, comme WeChat ou une application App Store, peut alors ne plus s’ouvrir sous macOS 27 et perdre sa session de connexion. La nouvelle version conserve d’abord l’application d’origine complète afin de restaurer sa signature et ses autorisations ; la restauration de la signature ne garantit pas celle d’une session déjà perdue.
 
-Le mécanisme de signature de code de macOS (`codesign`) vérifie l'intégrité du package applicatif, y compris la structure des chemins de fichiers. Quand AppPorts migre le répertoire de données d'une application vers le stockage externe et le remplace par un lien symbolique, le sceau de signature est rompu, provoquant les problèmes suivants :
+Depuis la version 1.8.2, AppPorts refuse par défaut de re-signer les applications en bac à sable. Il faut activer le mode classique et confirmer les risques. Les données de conteneur utilisent désormais la [migration par montage](/fr/datamigrae/mount-migration), sans modification de signature. Voir [Données de conteneur, bac à sable et identité de signature](/fr/datamigrae/container-identity).
+:::
 
-- **Blocage Gatekeeper** : `codesign --verify --deep --strict` détecte un échec de signature ; le système affiche une boîte de dialogue « Endommagé » ou « d'un développeur non identifié », bloquant le lancement de l'application
-- **Perturbation d'accès Keychain** : Les applications dépendant des groupes d'accès Keychain ne peuvent pas lire les identifiants stockés en raison des changements d'identité de signature
-- **Échec des droits (Entitlements)** : Certains droits d'application sont liés à l'identité de signature ; après un changement de signature, les droits ne correspondent plus
+## Quel problème la re-signature résout-elle ?
 
-### Types d'applications à haut risque
+macOS vérifie l’intégrité des applications par leur signature de code. Après avoir déplacé l’application sur un disque externe et laissé un lanceur local, le système peut parfois la considérer comme modifiée et refuser son ouverture avec « endommagée » ou « développeur non identifié ». Une re-signature Ad-hoc de **l’application réelle sur le disque externe** peut alors lui permettre de passer la vérification.
 
-| Type d'application | Niveau de risque | Raison |
-|---------------------|------------------|--------|
-| Applications avec mise à jour automatique Sparkle | **Élevé** | Le programme de mise à jour peut supprimer ou remplacer l'application, endommageant les liens symboliques |
-| Applications avec mise à jour automatique Electron | **Élevé** | `electron-updater` peut également interférer avec les applications sur le stockage externe |
-| Applications dépendant de Keychain | **Élevé** | La signature Ad-hoc change l'identité de signature ; les groupes d'accès Keychain échouent |
-| Applications Mac App Store | **Élevé** | Protection SIP ; ne peut pas être re-signée |
-| Applications avec mise à jour automatique native (Chrome, Edge) | Moyen | La mise à jour automatique peut remplacer la copie externe, invalidant l'entrée locale |
-| Applications iOS (version Mac) | Faible | Utilise Stub Portal ou whole symlink ; moins de problèmes de signature |
+C’est le seul rôle de la re-signature. Elle n’a pas de rapport avec la migration des répertoires de données ; son association à la migration des conteneurs dans les anciennes versions est à l’origine des problèmes sous macOS 27.
 
-### Types de répertoires de données à haut risque
+## Quand ne pas l’utiliser
 
-| Type de données | Niveau de risque | Raison |
-|-----------------|------------------|--------|
-| `~/Library/Application Support/` | Moyen | L'application peut utiliser des verrous de fichiers, des journaux SQLite WAL ou des attributs étendus ; peut se comporter anormalement à travers les liens symboliques |
-| `~/Library/Group Containers/` | Moyen | Partagé par plusieurs applications sous la même équipe ; les liens symboliques peuvent interférer avec d'autres applications |
-| `~/Library/Preferences/` | Faible-Moyen | `cfprefsd` met en cache les fichiers plist ; les liens symboliques peuvent provoquer la lecture de données obsolètes |
-| `~/Library/Caches/` | Faible | Les caches sont reconstituables ; la plupart des applications gèrent gracieusement l'absence de cache |
+| Situation | Explication |
+|------|------|
+| Application en bac à sable | Refusée par défaut ; autorisée en mode classique après confirmation, mais privilégiez la migration par montage |
+| Application App Store | Protégée par SIP, elle ne peut pas être re-signée |
+| Application utilisant le trousseau pour sa session | La re-signature fait perdre la session |
+| Application avec widgets ou extensions de partage | La perte des autorisations de groupes empêche les extensions de lire les données partagées |
+| Application qui s’ouvre normalement | Ne re-signez pas en l’absence de problème |
 
-## Mécanisme de re-signature
+N’envisagez cette option que si un message d’application endommagée apparaît réellement après migration externe, et essayez d’abord une réinstallation ou un nouveau téléchargement officiel.
 
-### Signature Ad-hoc
+## Commandes et réglages
 
-AppPorts utilise la **signature Ad-hoc** (signature locale sans certificat) pour corriger les signatures d'application après la migration. Commande d'exécution :
+| Commande | Emplacement | Par défaut | Comportement |
+|------|------|------|------|
+| Resigner cette app | Menu contextuel de l’application | Manuelle | Sauvegarde complète, puis signature d’une copie de travail ; refuse les applications en bac à sable par défaut, exige une confirmation en mode classique |
+| Re-signer après la migration | Barre d’outils des données, uniquement en mode classique | Désactivée | Re-signe l’application associée après migration par lien symbolique |
+| Re-signature à la connexion | Réglages | Désactivée pour une nouvelle installation | Traite uniquement les anciens enregistrements ; ignore ceux disposant d’un instantané complet pour ne pas contourner la transaction de signature |
+| Restaurer la signature originale | Menu contextuel, barre d’outils des données ou panneau de réparation | Manuelle | Restaure l’application d’origine depuis une sauvegarde complète ; un ancien enregistrement permet de choisir un original officiel de même version, sans clé privée du développeur |
 
-```bash
-codesign --force --deep --sign - <chemin de l'application>
-```
+La détection du bac à sable lit les autorisations de **l’application réelle**, pas du lanceur local. Si `com.apple.security.app-sandbox` vaut true, la signature est refusée. Le [mode classique](/fr/settings#classic-data-migration-mode) l’autorise avec une seconde confirmation à chaque fois.
 
-Où `-` indique la signature Ad-hoc (sans certificat de développeur).
-
-### Flux de signature
+## Procédure de signature
 
 ```mermaid
 flowchart TD
-    A[Démarrer la re-signature] --> B[Sauvegarder l'identité de signature originale]
-    B --> C{L'application est-elle verrouillée ?}
-    C -->|Oui| D[Déverrouiller temporairement le drapeau uchg]
-    C -->|Non| E{L'application est-elle en écriture ?}
-    D --> E
-    E =>|Non inscriptible & appartenant à root| F[Essayer de changer la propriété avec admin]
-    E =>|Inscriptible| G[Nettoyer les attributs étendus]
-    F --> G
-    F -->|Échec & app MAS| H[Passer la signature - Protection SIP]
-    G --> I[Nettoyer les fichiers parasites du répertoire racine du bundle]
-    I --> J{Contents est-il un lien symbolique ?}
-    J =>|Oui| K[Remplacer temporairement par une copie réelle du répertoire]
-    J =>|Non| L[Exécuter la signature profonde]
-    K --> L
-    L =>|Échec| M[Reculer vers la signature superficielle]
-    L =>|Réussi| N{Contents a-t-il été remplacé temporairement ?}
-    M --> N
-    N =>|Oui| O[Restaurer le lien symbolique]
-    N =>|Non| P[Re-verrouiller le drapeau uchg]
-    O --> P
-    P => Q[Signature terminée]
+    A[Résoudre l’application réelle et vérifier le mode classique] --> B[Conserver l’original complet et vérifier son contenu]
+    B --> C[Créer une copie de travail sur le même volume]
+    C --> D[Re-signer et vérifier la copie]
+    D --> E[Enregistrer les empreintes avant et après signature]
+    E --> F[Vérifier que l’application actuelle n’a pas changé]
+    F --> G[Échanger atomiquement la copie et l’application actuelle]
+    D -->|Échec| H[Conserver l’application actuelle et la sauvegarde]
+    F -->|Contenu modifié| H
+    G -->|Stockage incompatible avec un échange sûr| H
 ```
 
-### Étapes clés
+Le lanceur local est résolu vers l’application réelle : signature et restauration portent sur le vrai `.app` et n’écrasent pas le lanceur. Si la signature ou la vérification de la copie échoue, l’application actuelle reste intacte. Son état de verrouillage est également conservé.
 
-1. **Sauvegarder l'identité de signature originale** : Avant la signature, lire l'identité de signature actuelle de l'application (analyser les lignes `Authority=` via `codesign -dvv`), sauvegarder dans `~/Library/Application Support/AppPorts/signature-backups/<BundleID>.plist`
+## Sauvegarde et restauration de la signature
 
-2. **Nettoyer les attributs étendus** : Exécuter `xattr -cr` pour supprimer les forks de ressources, les infos Finder, etc., évitant les erreurs « detritus not allowed » lors de la signature
+**Une sauvegarde complète permet de restaurer la signature d’un développeur tiers sans sa clé privée.** La signature d’origine est déjà contenue dans les fichiers de l’application. La restauration remet ces fichiers en place ; elle ne signe pas de nouveau au nom du développeur. Le programme principal, les assistants imbriqués, les frameworks, les ressources de signature et les autorisations sont conservés avec l’application. Une application initialement Ad-hoc ou non signée retrouve aussi son état initial.
 
-3. **Nettoyer le répertoire racine du bundle** : Supprimer `.DS_Store`, `__MACOSX`, `.git`, `.svn` et autres fichiers parasites
+Les sauvegardes se trouvent dans `~/Library/Application Support/AppPorts/signature-backups/` : un enregistrement `.plist` associé à l’identifiant de l’application et une copie d’origine `original-…app`. Le format de version 2 conserve les empreintes du contenu original et du contenu re-signé. La copie sur écriture est privilégiée sur les systèmes de fichiers compatibles ; sinon, une copie complète est nécessaire. Prévoyez l’espace de la sauvegarde et de la copie de travail. Un espace insuffisant ou un échec de copie arrête la signature.
 
-4. **Gérer le lien symbolique Contents** : Si `Contents/` est un lien symbolique (stratégie Deep Contents Wrapper), le remplacer temporairement par une copie réelle du répertoire, puis restaurer le lien symbolique après la signature
+Pour restaurer :
 
-5. **Signature profonde → repli vers signature superficielle** : Privilégier la signature `--deep` (couvrant tous les composants imbriqués) ; si elle échoue à cause de permissions ou de problèmes de fork de ressources, reculer vers la signature superficielle sans `--deep`
+1. Quittez l’application.
+2. Si ses données de conteneur ont été migrées en mode classique, restaurez d’abord les répertoires dans « App Data ». Une fois son identité de bac à sable rétablie, l’application ne peut plus suivre de liens symboliques hors de son conteneur. AppPorts vérifie ce point et empêche de sauter cette étape.
+3. Cliquez sur « Restaurer la signature originale » dans le menu contextuel, la barre d’outils des données ou le panneau de réparation.
+4. AppPorts vérifie la sauvegarde, contrôle si l’application a été mise à jour ou modifiée, valide la signature d’origine dans une copie de travail, puis remplace l’application de façon sûre. La sauvegarde est supprimée après réussite.
 
-6. **Mécanisme de réessai** : Quand `codesign` produit une « erreur interne » ou est terminé par SIGKILL, réessayer jusqu'à 2 fois
+**Si l’application a changé ou si la sauvegarde est endommagée, la restauration s’arrête en conservant les deux.** Une ancienne version ne remplace jamais une version récente et une signature récente n’est pas mélangée avec une ancienne sauvegarde. Si le stockage ne permet pas l’échange atomique, ramenez d’abord l’application localement avant l’opération de signature. L’analyse ordinaire ne supprime pas les éléments de restauration.
 
-## Sauvegarde et restauration de signature
+Après une mise à jour ou réinstallation officielle, si la signature est strictement valide et que l’identité du développeur correspond à l’enregistrement, la prochaine re-signature crée une nouvelle sauvegarde complète de l’application actuelle. L’ancien enregistrement est archivé dans `signature-backups/retired/` et son ancienne copie d’origine est conservée, sans intervenir dans la nouvelle restauration. Elle occupe toujours de l’espace. Si vous n’avez plus besoin de cette version, retrouvez sa copie via `snapshotName` dans l’enregistrement archivé avant de la supprimer.
 
-### Résolution de chemin pour les applications liées
+### Que faire d’une ancienne sauvegarde contenant seulement le nom de l’identité ?
 
-Pour les applications liées (statut : « Liée »), les opérations de signature résolvent automatiquement le **vrai chemin de l'application externe** au lieu du shell Stub Portal local ou du lien symbolique. Stratégie de résolution :
+Les anciens `.plist` contiennent l’identifiant de l’application, le nom de l’identité de signature, le chemin et la date, mais aucun programme original ni autorisation. Ils ne permettent donc pas de restaurer la signature. Traiter un enregistrement Ad-hoc comme une suppression de signature, ou re-signer à partir d’un nom d’identité, ne constitue pas une véritable restauration.
 
-| Méthode de migration | Résolution |
-|---------------------|-----------|
-| Whole App Symlink | Résout la cible du lien symbolique vers le vrai chemin `.app` externe |
-| Stub Portal | Extrait le chemin `REAL_APP='...'` du script `Contents/MacOS/launcher` |
+La nouvelle version conserve ces enregistrements et propose « Choisir l’app d’origine… ». Obtenez un `.app` original officiel de **la même application et de la même version**. AppPorts vérifie le Bundle ID, la version et la signature, ainsi que l’identité du développeur si elle figure dans l’enregistrement. Après validation, il restaure l’original à l’emplacement de l’application réelle actuelle ; le lanceur local reste valide. L’original sélectionné n’est pas modifié.
 
-Cela signifie que les opérations de sauvegarde, restauration et re-signature ciblent toujours le vrai package d'application, garantissant que les changements de signature prennent effet.
+Si vous ne trouvez pas la même version, suivez les [étapes de réparation](/fr/macos-27#reparation) : restaurez les données, ramenez l’application localement et réinstallez depuis une source officielle. Un ancien enregistrement seul ne permet pas de recréer la signature perdue.
 
-### Sauvegarde
+## Risques liés aux types d’applications
 
-Les fichiers de sauvegarde sont stockés dans le répertoire `~/Library/Application Support/AppPorts/signature-backups/`, nommés d'après la **vraie application** `BundleID.plist` :
+Ces risques ne concernent pas directement la re-signature, mais sont souvent abordés ensemble :
 
-| Champ | Description |
-|-------|-------------|
-| `bundleIdentifier` | Bundle ID de l'application |
-| `signingIdentity` | Identité de signature originale (par ex., `Developer ID Application: ...` ou `ad-hoc`) |
-| `originalPath` | Chemin original de l'application |
-| `backupDate` | Horodatage de la sauvegarde |
+| Type d’application | Risque | Explication |
+|------|------|------|
+| Applications à mise à jour automatique Sparkle / Electron | Élevé | L’outil de mise à jour peut supprimer ou remplacer l’application externe ; utilisez « Migration verrouillée » |
+| Chrome / Edge | Moyen | Les mises à jour se réinstallent localement ; « Sortie en attente » invite à migrer de nouveau |
+| Applications App Store | Élevé | Impossible de les re-signer ; sous macOS 15.1+, privilégiez l’installation externe native de l’App Store |
 
-Les sauvegardes sont déclenchées aux moments suivants :
-
-- Avant la migration du répertoire de données (si la re-signature automatique est activée) — utilise le vrai chemin de l'application pour la sauvegarde
-- Avant toute opération de signature (idempotente ; n'écrase pas les sauvegardes existantes)
-- Action manuelle « Sauvegarder la signature »
-
-### Restauration
-
-Lors de la restauration d'une signature, AppPorts exécute différentes stratégies selon l'identité de signature sauvegardée :
-
-| Identité de signature sauvegardée | Comportement de restauration |
-|------------------------------------|------------------------------|
-| `ad-hoc` ou vide | Exécuter `codesign --remove-signature` pour supprimer la signature ; supprimer la sauvegarde |
-| Identité de certificat développeur valide | Vérifier si le certificat existe dans Keychain. Si présent, re-signer avec l'identité originale |
-| Identité de certificat développeur valide mais certificat absent de cette machine | **Repli vers la signature Ad-hoc** ; la signature originale ne peut pas être entièrement restaurée |
-
-### Scénarios d'échec de restauration
-
-Les scénarios suivants provoquent un échec ou une incomplétude de la restauration de signature :
-
-| Scénario | Résultat |
-|----------|----------|
-| Le fichier plist de sauvegarde n'existe pas | Lance une erreur `noBackupFound` ; impossible de restaurer |
-| Le certificat de développeur original n'est pas dans le Keychain local | Revient à la signature Ad-hoc. L'application peut se lancer mais les groupes d'accès Keychain et certains droits peuvent échouer |
-| Applications Mac App Store (protection SIP | Passées silencieusement. SIP empêche toute modification des signatures d'applications système |
-| Répertoire d'application non inscriptible & appartenant à root | Tente de changer la propriété via les privilèges admin. Échoue si l'utilisateur annule l'invite d'autorisation |
-| Cible du lien symbolique Contents perdue | `copyItem` échoue dans l'étape de remplacement temporaire ; la signature ne peut pas être exécutée |
-| L'utilisateur annule l'autorisation admin | Lance `codesignFailed("User cancelled authorization")` |
-| Signature profonde et superficielle toutes deux échouées | Erreur propagée vers le haut ; l'opération de signature échoue |
-
-::: warning ⚠️ À propos des certificats de développeur perdus
-Le scénario d'échec de restauration le plus courant dans la réalité est : l'application originale était signée par un développeur tiers (par ex., `Developer ID Application: Google LLC`), mais le Keychain de la machine actuelle n'a pas la clé privée correspondante. Dans ce cas, l'opération de restauration ne peut générer qu'une signature Ad-hoc ; **l'identité de signature originale ne peut pas être entièrement restaurée**. Pour les applications dépendant d'identités de signature spécifiques pour les groupes d'accès Keychain ou les profils de configuration d'entreprise, cela peut provoquer des anomalies fonctionnelles.
-:::
+Voir [Détection des mises à jour automatiques](/fr/migration-strategy/updater-detection) et [Types d’applications et stratégies](/fr/migration-strategy/strategy-map).

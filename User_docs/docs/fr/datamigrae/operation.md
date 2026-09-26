@@ -2,145 +2,111 @@
 outline: deep
 ---
 
-# Guide d'opération de migration des données
+# Guide pratique de migration des données
 
-Cette page couvre le flux de travail pratique pour la migration des répertoires de données. Pour les détails d'implémentation technique, voir [Implémentation de base](/fr/datamigrae/baseinfo).
+Cette page décrit les opérations de migration des répertoires de données. Pour les détails techniques, consultez le [fonctionnement](/fr/datamigrae/baseinfo).
 
-## Trouver les répertoires de données associés aux applications
+## Trouver les répertoires associés à une application
 
-1. Basculer vers l'onglet « Répertoires de données » dans la fenêtre principale d'AppPorts
-2. Le panneau gauche affiche toutes les applications installées
-3. Cliquer sur une application ; le panneau droit affiche ses répertoires de données associés sous `~/Library/`
+1. Dans la fenêtre principale d’AppPorts, ouvrez l’onglet « Répertoires de données ».
+2. En haut, choisissez « Répertoires d'outils » ou « App Data ».
+3. Pour les données d’application, sélectionnez une application à gauche. Ses répertoires associés dans `~/Library/` apparaissent à droite.
 
-AppPorts analyse automatiquement les répertoires suivants, en les associant par Bundle ID ou nom de l'application :
+AppPorts utilise le Bundle ID ou le nom de l’application pour trouver les emplacements suivants :
 
-| Chemin d'analyse | Méthode d'association |
-|------------------|-----------------------|
-| `~/Library/Application Support/` | Bundle ID ou nom de l'application |
-| `~/Library/Preferences/` | Bundle ID ou nom de l'application |
-| `~/Library/Containers/` | Bundle ID |
-| `~/Library/Group Containers/` | Bundle ID |
-| `~/Library/Caches/` | Bundle ID ou nom de l'application |
-| `~/Library/WebKit/` | Bundle ID |
-| `~/Library/HTTPStorages/` | Bundle ID |
-| `~/Library/Application Scripts/` | Bundle ID |
-| `~/Library/Logs/` | Nom de l'application |
-| `~/Library/Saved Application State/` | Nom de l'application |
+| Chemin analysé | Correspondance | Méthode de migration |
+|------|------|------|
+| `~/Library/Application Support/` | Bundle ID ou nom de l’application | Lien symbolique |
+| `~/Library/Preferences/` | Bundle ID ou nom de l’application | Lien symbolique |
+| `~/Library/Containers/` | Bundle ID | **Migration par montage** |
+| `~/Library/Group Containers/` | Bundle ID | **Migration par montage** |
+| `~/Library/Caches/` | Bundle ID ou nom de l’application | Lien symbolique |
+| `~/Library/WebKit/` | Bundle ID | Lien symbolique |
+| `~/Library/HTTPStorages/` | Bundle ID | Lien symbolique |
+| `~/Library/Application Scripts/` | Bundle ID | Lien symbolique |
+| `~/Library/Logs/` | Nom de l’application | Lien symbolique |
+| `~/Library/Saved Application State/` | Nom de l’application | Lien symbolique |
 
-## Répertoires d'outils (Dot-Folders)
+Pour comprendre le cas particulier des conteneurs, consultez [Migration par montage](/fr/datamigrae/mount-migration).
 
-AppPorts peut détecter automatiquement les dot-folders créés par les outils de développement courants dans le répertoire personnel de l'utilisateur :
+## Répertoires d’outils
 
-1. Basculer vers le sous-onglet « Répertoires d'outils » dans l'onglet Répertoires de données
-2. La page liste tous les répertoires d'outils détectés avec leurs tailles
-3. Chaque répertoire affiche un badge de priorité (recommended/optional) et un statut
+AppPorts reconnaît les répertoires créés par les outils de développement courants dans le dossier personnel, comme `~/.npm` ou `~/.gradle` :
 
-Si un répertoire d'outil local est absent mais que l'emplacement canonique du stockage externe sélectionné contient encore un répertoire géré par AppPorts, l'élément apparaît comme « Nécessite une re-liaison ». Changer de stockage externe déclenche une nouvelle analyse et actualise cet état. Les fichiers ordinaires ne sont pas traités comme des répertoires pouvant être reliés.
+1. Dans « Répertoires de données », choisissez « Répertoires d'outils ».
+2. La liste affiche les répertoires reconnus, leur taille, leur priorité et leur état.
 
-Pour la liste complète supportée, voir [Détection des répertoires d'outils](/fr/datamigrae/tools).
+Si le répertoire local n’existe plus, mais qu’un répertoire géré par AppPorts reste à l’emplacement canonique du disque externe, son état est « En attente de reconnexion ». Voir la liste dans [Reconnaissance des répertoires d’outils](/fr/datamigrae/tools).
 
-## Migration de répertoires (dossiers personnalisés)
+## Migration de dossiers personnalisés
 
-L'onglet « Migration de répertoires » migre des dossiers utilisateur arbitraires. Il convient aux grands projets, modèles, bibliothèques de ressources ou caches d'outils à déplacer vers le stockage externe.
+L’onglet « Directory Migration » déplace n’importe quel dossier du dossier personnel. Il convient aux grands projets, modèles et bibliothèques de ressources.
 
-1. Ouvrir « Migration de répertoires » dans la fenêtre principale
-2. Cliquer sur le bouton « + » dans l'en-tête « Dossiers locaux »
-3. Choisir le dossier local à migrer, puis le répertoire racine cible sur le stockage externe
-4. AppPorts utilise `racine cible/nom du dossier local` comme destination externe, enregistre la configuration et démarre la migration
+1. Ouvrez « Directory Migration ».
+2. Cliquez sur « + » dans l’en-tête « Local Folders ».
+3. Choisissez le dossier local, puis le répertoire racine de destination sur le disque externe. La destination est `目标根目录/文件夹名`.
 
-Pour éviter les copies récursives, la migration de répertoires système ou la prise en charge d'un mauvais chemin, ces vérifications sont appliquées :
+Règles de validation : le dossier local doit se trouver dans le dossier personnel, sans être celui-ci ; ni son chemin ni ses parents ne peuvent être des liens symboliques ; il ne peut contenir un répertoire déjà géré ni être contenu par celui-ci. La destination externe doit se trouver hors du dossier personnel et ne peut ni contenir le dossier local ni être contenue par lui.
 
-- Le dossier local doit se trouver dans le dossier personnel de l'utilisateur actuel et ne peut pas être tout le dossier personnel
-- Le chemin local et ses chemins parents ne doivent pas être des liens symboliques
-- Le dossier local ne doit pas chevaucher un répertoire de données ou une entrée de migration déjà gérés
-- La racine cible externe doit être un dossier et ne doit pas se trouver dans le dossier personnel de l'utilisateur actuel
-- La destination externe finale ne doit pas être dans le dossier local, et le dossier local ne doit pas être dans la destination externe finale
+Après migration, le panneau local indique l’état du chemin d’origine et le panneau externe celui de la copie. Vous pouvez choisir « Relier » ou « Restaurer ». Supprimer la configuration efface uniquement l’enregistrement, pas les données.
 
-Après la migration, le panneau local affiche l'état du chemin d'origine et le panneau externe affiche l'état de la copie externe. Sélectionnez des éléments dans le panneau externe pour « Re-lier le dossier » ou « Restaurer le dossier ». Supprimer une configuration la retire seulement de la liste de migration ; cela ne supprime pas automatiquement les données réelles.
+## Migration par lien symbolique
 
-## Opérations de migration
+Cette méthode convient à tous les répertoires situés hors des conteneurs.
 
-### Migration d'un répertoire unique
+1. Repérez le répertoire et cliquez sur « Migrate ».
+2. AppPorts copie les données sur le disque externe, écrit le marqueur de gestion, renomme le répertoire d’origine en sauvegarde, crée le lien symbolique au chemin d’origine, puis supprime la sauvegarde.
+3. L’état devient « Lié ».
 
-1. Trouver le répertoire à migrer dans la liste des répertoires de données
-2. Cliquer sur le bouton « Migrer » à droite
-3. AppPorts effectue les étapes suivantes :
-   - Copier le répertoire vers le stockage externe
-   - Écrire les métadonnées de lien géré
-   - Supprimer le répertoire local original
-   - Créer un lien symbolique
-
-### Re-signature automatique
-
-Lorsque « Re-signature automatique » est activée dans les paramètres, la migration du répertoire de données déclenche automatiquement la signature pour l'application associée :
-
-1. **Avant la migration** : Sauvegarde la signature originale du **vrai chemin externe** de l'application associée (pas le shell local)
-2. **Après la migration** : Exécute la re-signature Ad-hoc sur la **vraie application externe** (mode silencieux ; les échecs n'affichent pas de dialogue)
-
-Pour les applications liées, AppPorts résout automatiquement le vrai chemin de l'application derrière le shell Stub Portal ou le lien symbolique, garantissant que les changements de signature sont appliqués au vrai package d'application plutôt qu'à un shell local invalide.
-
-::: tip 💡 Aucune action manuelle requise
-Avec la re-signature automatique activée, le workflow de migration du répertoire de données est entièrement automatisé. La sauvegarde de signature et la re-signature ciblent toutes deux le vrai chemin de l'application — aucune intervention manuelle requise.
+::: tip Re-signer après la migration
+Le commutateur « Re-signer après la migration » se trouve dans la barre d’outils des répertoires de données et est désactivé par défaut. Lorsqu’il est activé, AppPorts re-signe l’application associée avec Ad-hoc après migration, uniquement pour traiter un message « endommagée ». Les applications en bac à sable sont ignorées. Il est généralement inutile de l’activer ; voir [Re-signature et prévention des plantages](/fr/datamigrae/resign).
 :::
 
-### Contexte des logs
+## Migration par montage
 
-Les opérations sur les répertoires de données (migration, restauration, normalisation, re-liage) incluent automatiquement les informations de contexte de l'application associée dans les logs :
+Cette méthode concerne les répertoires sous `Containers` et `Group Containers`. Le bouton affiche « Migration par montage ».
+
+1. Vérifiez que le disque externe est APFS et quittez l’application associée.
+2. Cliquez sur « Migration par montage », lisez les trois indications de confirmation, puis continuez.
+3. AppPorts crée un volume externe, copie les données et monte le volume au répertoire d’origine.
+4. L’état devient « Monté ». À la première ouverture de l’application, autorisez l’accès dans le dialogue système.
+
+Consultez le guide complet de [migration par montage](/fr/datamigrae/mount-migration).
+
+## Restauration
+
+**Répertoire migré par lien symbolique** (état « Lié ») : cliquez sur « Restaurer ». AppPorts recopie les données localement, supprime le lien symbolique, puis la copie externe.
+
+**Répertoire migré par montage** (état « Monté » ou « En attente de montage ») : cliquez sur « Restaurer ». AppPorts recopie les données du volume localement, puis démonte et supprime le volume. Gardez le disque externe connecté.
+
+Les deux méthodes copient les données avant de basculer les chemins. Un échec intermédiaire ne fait pas perdre les données.
+
+## Résoudre les états inhabituels
+
+| État | Signification | Action |
+|------|------|------|
+| Normalisation requise | Lien géré par AppPorts, mais chemin externe non canonique | « Normaliser » déplace les données au chemin canonique et recrée le lien |
+| En attente de reconnexion | Les données externes existent, mais le lien local a disparu | « Relier » recrée le lien symbolique |
+| Lien symbolique existant | Lien créé en dehors d’AppPorts | « Détails du lien » permet de le prendre en charge |
+| En attente de montage | Le volume est disponible, mais non monté | « Monter » |
+| Disque externe déconnecté | Le volume de données est introuvable | Connectez le disque externe ; AppPorts le reconnectera automatiquement |
+
+La reconnexion et la normalisation s’appliquent uniquement aux répertoires. Si un fichier ordinaire occupe la destination externe, AppPorts s’arrête et conserve ce fichier.
+
+## Contexte des journaux
+
+Les opérations sur les répertoires de données consignent l’application associée pour faciliter le diagnostic :
 
 | Champ | Description |
-|-------|-------------|
-| `app_name` | Nom de l'application associée |
-| `app_status` | Statut de l'application (Liée, Locale, etc.) |
-| `app_is_resigned` | Si l'application a été re-signée |
-| `app_bundle_id` | Bundle ID de l'application (lu depuis le vrai chemin) |
-| `app_real_path` | Vrai chemin externe de l'application |
+|------|------|
+| `app_name` | Nom de l’application associée |
+| `app_status` | État de l’application |
+| `app_is_resigned` | Indique si l’application a été re-signée |
+| `app_bundle_id` | Bundle ID de l’application réelle |
+| `app_real_path` | Chemin de l’application réelle |
 
-Ces champs aident à localiser les problèmes plus précisément lors de l'exportation de packages de diagnostic.
+Les opérations de migration par montage consignent également le nom du volume, son Volume UUID et la sortie des commandes `diskutil`.
 
-### Migration par lots
+## Vue arborescente
 
-1. Cocher plusieurs répertoires dans la liste des répertoires d'outils
-2. Cliquer sur le bouton « Migration par lots » en bas
-3. AppPorts exécute la migration séquentiellement
-
-::: tip 💡 Recommandations de priorité
-Les répertoires de données sont classés en trois niveaux de priorité :
-
-- **Critique** (`critical`) : Doit fonctionner après la migration ; affecte les fonctionnalités principales de l'application
-- **Recommandé** (`recommended`) : Économie d'espace importante ; bénéfice de migration élevé
-- **Optionnel** (`optional`) : Taille faible ou reconstituable
-
-Il est recommandé de prioriser la migration des répertoires marqués comme « Recommandé ».
-:::
-
-## Opérations de restauration
-
-1. Trouver le répertoire migré dans la liste des répertoires de données (statut : « Lié »)
-2. Cliquer sur le bouton « Restaurer » à droite
-3. AppPorts effectue les étapes suivantes :
-   - Supprimer le lien symbolique local
-   - Copier les données depuis le stockage externe vers le local
-   - Supprimer le répertoire externe (dans la mesure du possible)
-
-## Gestion des états anormaux
-
-### Nécessite une normalisation
-
-Le répertoire est géré par AppPorts, mais le chemin externe n'est pas à l'emplacement canonique. Cliquer sur « Normaliser » ; AppPorts déplacera les données externes vers le chemin canonique et reconstruira le lien symbolique.
-
-### Nécessite une re-liaison
-
-Le répertoire de données existe toujours sur le stockage externe, mais le lien symbolique local est perdu. Cliquer sur « Re-lier » ; AppPorts recréera le lien symbolique. La re-liaison s'applique uniquement si la cible externe est encore un répertoire. Si un fichier ordinaire occupe la cible externe, AppPorts arrête l'opération et conserve ce fichier.
-
-### Lien symbolique existant
-
-Un lien symbolique créé par l'utilisateur, non créé par AppPorts. Vous pouvez choisir « Reprendre » ; AppPorts écrira les métadonnées de lien géré et le gérera par la suite.
-
-## Vue en arborescence
-
-Pour les répertoires de données contenant des sous-répertoires (par ex., plusieurs répertoires d'applications sous `Application Support`), AppPorts fournit une vue de regroupement en arborescence :
-
-- Le répertoire parent affiche des flèches d'expansion/réduction à gauche
-- Les sous-répertoires affichent une indentation hiérarchique
-- Chaque nœud affiche indépendamment la taille et le statut
-- Les opérations de migration/restauration peuvent être effectuées sur des sous-répertoires individuels
+Les répertoires contenant des sous-répertoires sont présentés en arborescence : une flèche à gauche du parent permet de les développer, les enfants sont décalés, et chaque nœud affiche sa taille, son état et ses propres boutons.
