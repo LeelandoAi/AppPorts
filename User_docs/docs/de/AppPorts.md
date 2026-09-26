@@ -4,41 +4,41 @@ outline: deep
 
 # AppPorts Benutzerhandbuch
 
-Dieses Handbuch stellt systematisch die Funktionen, Designprinzipien und technische Umsetzung von AppPorts vor. Weitere technische Details finden Sie unter [DeepWiki](https://deepwiki.com/wzh4869/AppPorts). Verbesserungsvorschläge bitte über die Projekt-[Issues](https://github.com/wzh4869/AppPorts/issues) einreichen.
+Dieses Handbuch beschreibt die Kernfunktionen, Designprinzipien und technische Umsetzung von AppPorts. Weitere technische Details finden Sie im [DeepWiki](https://deepwiki.com/wzh4869/AppPorts). Verbesserungsvorschläge können Sie in den [Issues](https://github.com/wzh4869/AppPorts/issues) des Projekts einreichen.
 
 ## Überblick
 
-AppPorts ist ein Anwendungsmigrations- und Verknüpfungstool für [macOS](https://www.apple.com/macos/), das die Migration großer Anwendungen auf externe Speichergeräte unterstützt, während die vollständige Systemfunktionalität und Konsistenz erhalten bleibt.
+AppPorts ist ein Werkzeug für [macOS](https://www.apple.com.cn/os/macos/), mit dem Sie Apps auf externe Speichergeräte migrieren und lokal verknüpfen können. Große Apps lassen sich so auslagern, während das Verhalten von Finder, Launchpad, App-Menüs und Systemupdates möglichst unverändert bleibt.
 
-### AppPorts-Philosophie
+### Die Philosophie von AppPorts
 
 | Prinzip | Beschreibung |
-|---------|--------------|
-| **Transparente Erfahrung** | Stellt sicher, dass die Benutzererfahrung und das Betriebssystem die App weiterhin als vom internen Speicher ausgeführt wahrnehmen |
-| **Stabile Strategie** | Bevorzugt erprobte, stabilere Migrationsansätze |
-| **Geringe Systemlast** | Keine Daemons, vermeidet kontinuierliche Systemressourcenverbrauch |
-| **Breite Internationalisierung** | Bevorzugt die Abdeckung vieler Sprachen; Übersetzungsbreite vor Präzision |
-| **Barrierefreiheitsfreundlich** | Umfassende Barrierefreiheitsunterstützung |
+|------|------|
+| **Vertraute Nutzung** | Migrierte Apps sollen sich für Benutzer und Betriebssystem möglichst wie lokale Apps verhalten |
+| **Stabile Verfahren** | Erprobte Verfahren mit höherer Migrationsstabilität haben Vorrang |
+| **Geringe Systemlast** | Keine Abhängigkeit von Daemons, um eine dauerhafte Belegung von Systemressourcen zu vermeiden |
+| **Breite Internationalisierung** | Möglichst viele Sprachen unterstützen und die Übersetzungsqualität laufend verbessern |
+| **Barrierefreiheit** | Möglichst umfassende Unterstützung für Bedienungshilfen bieten |
 
 ## Kernfunktionen
 
-- **Badge-freie Migration**: Ein-Klick-Migration großer Apps auf externe Laufwerke. Lokal bleibt nur eine leichte Launcher-Hülle übrig; der Finder zeigt keine Verknüpfungspfeile an; Launchpad und macOS-App-Menü funktionieren normal.
-- **Auto-Update-Schutz**: Erkennt automatisch Apps mit Auto-Update-Unterstützung (Sparkle, Electron, Chrome usw.) und bietet eine Option „Gesperrte Migration", um zu verhindern, dass Auto-Updater Apps auf dem externen Laufwerk löschen oder überschreiben.
-- **Stub Portal Versions-Synchronisierung**: Wenn externe Apps über den App Store aktualisiert werden, werden die Versionsinformationen des lokalen Stub Portals automatisch synchronisiert, sodass das Menü „Öffnen mit" stets die korrekte Version anzeigt.
-- **Benutzerdefinierte Scan-Verzeichnisse**: Zusätzliche lokale App-Scan-Verzeichnisse (z. B. JetBrains Toolbox, Steam) können hinzugefügt werden. Verzeichnisse werden gespeichert und automatisch überwacht.
-- **Code-Signatur-Verwaltung**: Falls nach der Migration eine „Beschädigt"-Meldung erscheint, Ein-Klick-Neuzeichnung über das Rechtsklickmenü. Unterstützt das Sichern und Wiederherstellen der ursprünglichen Signaturen; automatische Neuzeichnung nach Datenverzeichnismigration.
-- **macOS 15.1+ App Store-Unterstützung**: Unterstützt die Installation von App Store-Apps direkt auf externe Laufwerke mit In-Place-Updates auf dem externen Laufwerk.
-- **Ein-Klick-Wiederherstellung**: Unterstützt die Rückmigration von Apps in den lokalen Speicher mit automatischer Linkentfernung. Automatische Wiederherstellung bei unterbrochener Migration.
-- **Datenverzeichnisverwaltung**: Unterstützt die Migration von App-Datenverzeichnissen (`~/Library/`-Unterverzeichnisse, `~/.npm` usw.) in den externen Speicher, mit Baumansicht-Gruppierung, Suche und Sortierung.
-- **Verzeichnismigration**: Verschiebt beliebige echte Ordner unter dem Benutzer-Home in externen Speicher, nützlich für große Projekte, Modelle, Asset-Bibliotheken und Tool-Caches, mit Neuverlinkung, Wiederherstellung und Pfadüberschneidungsprüfung.
+- **Migration ohne Verknüpfungspfeil**: Große Apps mit einem Klick auf externen Speicher migrieren. Lokal bleibt nur eine schlanke Launcher-Hülle. Finder zeigt keinen Verknüpfungspfeil an; Launchpad und die macOS-App-Menüs zeigen die App weiterhin normal an.
+- **Schutz vor automatischen Updates**: Erkennt Apps mit eigenen Updatern wie Sparkle, Electron und Chrome und bietet „Gesperrte Migration“ an, damit Updater die externe App-Kopie nicht löschen oder überschreiben.
+- **Hinweis auf neuere lokale Versionen**: Ist die echte lokale App neuer als ihre externe Kopie, zeigt AppPorts „Ausstehende Auslagerung“ an. Sie können die neuere lokale Version migrieren und damit die ältere externe Kopie ersetzen.
+- **Versionsabgleich für Stub Portal**: Aktualisiert der App Store eine App auf dem externen Laufwerk, werden die Versionsinformationen des lokalen Stub Portals automatisch angepasst. Das Menü „Öffnen mit“ zeigt damit stets die richtige Version.
+- **Eigene Scan-Verzeichnisse**: Zusätzliche lokale App-Verzeichnisse, etwa von JetBrains Toolbox oder Steam, können hinzugefügt werden. AppPorts speichert sie und überwacht Änderungen automatisch.
+- **Verwaltung von Codesignaturen**: Wird die App nach der Migration ihres Programmpakets als beschädigt gemeldet, können Sie sie über das Kontextmenü neu signieren. Das Sichern und Wiederherstellen der Originalsignatur wird unterstützt. Sandbox-Apps werden grundsätzlich nicht neu signiert.
+- **App Store-Unterstützung ab macOS 15.1**: App Store-Apps lassen sich direkt auf externen Speicher installieren und dort aktualisieren, ohne sie auf den Mac zurückzuholen.
+- **Wiederherstellung mit einem Klick**: Apps auf den Mac zurückholen und ihre Verknüpfungen automatisch entfernen. Unterbrochene Migrationen können automatisch wiederhergestellt werden.
+- **Verwaltung von Datenverzeichnissen**: App-Datenverzeichnisse wie Unterverzeichnisse von `~/Library/` oder `~/.npm` auf externen Speicher migrieren. Baumansicht, Suche und Sortierung erleichtern die Verwaltung; AppPorts-Metadaten dienen der strengen Prüfung von Wiederherstellungszielen.
+- **Mount-Migration von Containerdaten**: Sandbox-Containerdaten wie WeChat-Chatverläufe werden in ein eigenes Volume auf einem externen APFS-Laufwerk migriert, das am ursprünglichen Verzeichnis eingebunden wird. Die App-Signatur bleibt unverändert.
+- **Verzeichnismigration**: Beliebige echte Ordner im Benutzerordner auf externen Speicher migrieren, etwa große Projekte, Modelle, Mediensammlungen und Tool-Caches. Erneutes Verlinken, Wiederherstellung und Prüfungen auf überlappende Pfade werden unterstützt.
 
-## Glossar
+## Migrationsstrategien
 
-### Migrationsstrategien
+### Deep Contents Wrapper (Migration des Contents-Verzeichnisses)
 
-#### Deep Contents Wrapper (Contents-Verzeichnismigration)
-
-Die Standard-Dateistruktur einer macOS-Anwendung sieht wie folgt aus:
+Ein macOS-App-Paket hat normalerweise diese Dateistruktur:
 
 ```text
 /Applications/Safari.app/
@@ -50,40 +50,40 @@ Die Standard-Dateistruktur einer macOS-Anwendung sieht wie folgt aus:
 └── ...
 ```
 
-Die Deep Contents Wrapper-Strategie migriert alle Anwendungsinhalte in den externen Speicher und erstellt lokal ein leeres `.app`-Verzeichnis mit nur einem symbolischen Link, der auf das externe `Contents`-Verzeichnis verweist. Da macOS ein vollständiges `.app`-Paket erkennt (und keine Verknüpfung), zeigt der Finder keine Pfeilmarkierungen an; Icons, Launchpad und App-Menüs funktionieren normal.
+Deep Contents Wrapper migriert den gesamten Inhalt der App auf externen Speicher und erstellt lokal ein leeres `.app`-Verzeichnis mit demselben Namen. Darin liegt lediglich ein symbolischer Link auf das externe `Contents`-Verzeichnis. Da macOS ein vollständiges `.app`-Paket erkennt, zeigt Finder keinen Verknüpfungspfeil an. Symbol, Launchpad und App-Menüs funktionieren normal.
 
-::: warning ⚠️ Diese Strategie ist in der aktuellen Version veraltet
-Der Hauptnachteil von Deep Contents Wrapper ist, dass Auto-Updater symbolischen Links folgen und Dateien direkt im externen Speicher ändern, was die Anwendung beschädigen kann.
+::: warning Dieses Verfahren wird in der aktuellen Version nicht mehr verwendet
+Der Hauptnachteil von Deep Contents Wrapper: Automatische Updater können dem symbolischen Link folgen und Dateien auf dem externen Laufwerk direkt verändern. Dadurch kann die eigentliche App beschädigt werden.
 :::
 
-#### Stub Portal
+### Stub Portal (Launcher-Hülle)
 
-Der Stub Portal-Ansatz erstellt lokal eine minimale `.app`-Hülle, die nur diese vier Elemente enthält:
+Stub Portal erstellt lokal eine minimale `.app`-Hülle, die nur diese vier Bestandteile enthält:
 
-| Komponente | Beschreibung |
-|------------|--------------|
-| `Contents/MacOS/launcher` | Bash-Launchskript, das `open "/Volumes/External/SomeApp.app"` ausführt |
-| `Contents/Resources/` | Icon-Datei, die von der externen Anwendung kopiert wird |
-| `Contents/Info.plist` | Vereinfacht aus der externen App-`Info.plist`, mit `CFBundleExecutable` auf `launcher` gesetzt, `LSUIElement=true` (nicht im Dock angezeigt) und alle update-bezogenen Konfigurationsschlüssel entfernt |
-| `Contents/PkgInfo` | Standard-4-Byte-Kennungsdatei |
+| Bestandteil | Beschreibung |
+|------|------|
+| `Contents/MacOS/launcher` | Launcher, der `open "/Volumes/External/SomeApp.app"` ausführt |
+| `Contents/Resources/` | Von der externen App kopierte Symboldateien |
+| `Contents/Info.plist` | Aus der externen `Info.plist` vereinfacht erzeugt: `CFBundleExecutable` wird auf `launcher` gesetzt, `LSUIElement=true` hinzugefügt, damit kein Dock-Symbol erscheint, und alle Update-Konfigurationsschlüssel werden entfernt |
+| `Contents/PkgInfo` | Standard-Kennungsdatei mit 4 Byte |
 
-Wenn der Benutzer auf diese Hülle klickt, führt macOS das `launcher`-Skript aus und öffnet die echte Anwendung auf dem externen Laufwerk über den `open`-Befehl. Es sind keine symbolischen Links lokal vorhanden; Auto-Updater können nicht durchdringen.
+Beim Öffnen der Hülle führt macOS `launcher` aus. Dieser startet mit `open` die echte App auf dem externen Speicher. Lokal gibt es keine symbolischen Links, denen ein Updater bis zur externen App folgen könnte.
 
-##### iOS Stub Portal
+### iOS Stub Portal (Launcher-Hülle für iOS)
 
-Das Grundprinzip ist dasselbe wie beim Standard Stub Portal, aber die Icon-Behandlung unterscheidet sich. iOS-App-Icons sind nicht in `Info.plist` angegeben, sondern als mehrere `AppIcon.png`-Dateien in den `Wrapper/`- oder `WrappedBundle/`-Verzeichnissen gespeichert. Der Ablauf ist:
+Das Grundprinzip entspricht Stub Portal; nur die Verarbeitung der Symbole unterscheidet sich. iOS-Apps geben ihre Symbole nicht in `Info.plist` an, sondern speichern mehrere `AppIcon.png`-Dateien unter `Wrapper/` oder `WrappedBundle/`. Der Ablauf:
 
-1. Höchstauflösende `AppIcon.png`-Datei finden
-2. Mit `sips` auf 256×256 Pixel skalieren
-3. Mit `sips` ins `.icns`-Format konvertieren
-4. `Info.plist` aus `iTunesMetadata.plist` generieren (iOS-Apps enthalten keine standardmäßige `Info.plist`)
+1. Die `AppIcon.png`-Datei mit der höchsten Auflösung suchen.
+2. Mit `sips` auf 256×256 Pixel skalieren.
+3. Mit `sips` in das Format `.icns` konvertieren.
+4. Aus `iTunesMetadata.plist` eine `Info.plist` erzeugen, da iOS-Apps keine standardmäßige `Info.plist` enthalten.
 
-#### Whole Symlink
+### Whole Symlink (symbolischer Link auf das gesamte Paket)
 
-Erstellt das gesamte `.app`-Verzeichnis als symbolischen Link zum externen Speicher:
+Das gesamte `.app`-Verzeichnis wird als symbolischer Link auf den externen Speicher angelegt:
 
 ```text
 /Applications/SomeApp.app → /Volumes/External/SomeApp.app
 ```
 
-Lokal wird nur ein symbolischer Link ohne tatsächliche Dateien beibehalten. macOS kann die App normal öffnen, aber der Finder zeigt Pfeilverknüpfungsmarker auf dem Icon an, und das Launchpad hat gelegentlich Kompatibilitätsprobleme. Auto-Updater können auch über den symbolischen Link auf externe App-Dateien zugreifen. Dies ist AppPorts' Fallback-Migrationsstrategie.
+Lokal bleibt nur ein symbolischer Link ohne eigentliche App-Dateien. macOS kann die App normalerweise öffnen, doch Finder zeigt einen Verknüpfungspfeil am Symbol an, und bei Launchpad können Kompatibilitätsprobleme auftreten. Auch automatische Updater können dem Link folgen und externe App-Dateien verändern. AppPorts verwendet dieses Verfahren daher hauptsächlich als Rückfallstrategie.

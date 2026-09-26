@@ -2,145 +2,111 @@
 outline: deep
 ---
 
-# Datenmigrations-Betriebshandbuch
+# Anleitung zur Datenmigration
 
-Diese Seite behandelt den praktischen Arbeitsablauf für die Datenverzeichnismigration. Technische Implementierungsdetails finden Sie unter [Grundlegende Implementierung](/de/datamigrae/baseinfo).
+Diese Seite beschreibt die praktische Datenmigration. Die technische Umsetzung steht unter [Grundlagen](/de/datamigrae/baseinfo).
 
-## App-assoziierte Datenverzeichnisse finden
+## Datenordner einer App finden
 
-1. Wechseln Sie im Hauptfenster von AppPorts zum Reiter „Datenverzeichnisse"
-2. Das linke Panel zeigt alle installierten Apps
-3. Klicken Sie auf eine App; das rechte Panel zeigt die zugehörigen Datenverzeichnisse unter `~/Library/` an
+1. Öffne im AppPorts-Hauptfenster „Datenverzeichnisse“.
+2. Wechsle oben zwischen „Tool-Verzeichnisse“ und „App Data“.
+3. Für App-Daten wählst du links eine App; rechts erscheinen ihre zugehörigen Ordner unter `~/Library/`.
 
-AppPorts scannt automatisch die folgenden Verzeichnisse und gleicht sie anhand der App Bundle ID oder des Namens ab:
+AppPorts gleicht diese Orte anhand der Bundle ID oder des App-Namens ab:
 
-| Scan-Pfad | Abgleichmethode |
-|-----------|-----------------|
-| `~/Library/Application Support/` | Bundle ID oder App-Name |
-| `~/Library/Preferences/` | Bundle ID oder App-Name |
-| `~/Library/Containers/` | Bundle ID |
-| `~/Library/Group Containers/` | Bundle ID |
-| `~/Library/Caches/` | Bundle ID oder App-Name |
-| `~/Library/WebKit/` | Bundle ID |
-| `~/Library/HTTPStorages/` | Bundle ID |
-| `~/Library/Application Scripts/` | Bundle ID |
-| `~/Library/Logs/` | App-Name |
-| `~/Library/Saved Application State/` | App-Name |
+| Durchsuchter Pfad | Abgleich | Migrationsverfahren |
+|----------|----------|----------|
+| `~/Library/Application Support/` | Bundle ID oder App-Name | Symbolischer Link |
+| `~/Library/Preferences/` | Bundle ID oder App-Name | Symbolischer Link |
+| `~/Library/Containers/` | Bundle ID | **Mount-Migration** |
+| `~/Library/Group Containers/` | Bundle ID | **Mount-Migration** |
+| `~/Library/Caches/` | Bundle ID oder App-Name | Symbolischer Link |
+| `~/Library/WebKit/` | Bundle ID | Symbolischer Link |
+| `~/Library/HTTPStorages/` | Bundle ID | Symbolischer Link |
+| `~/Library/Application Scripts/` | Bundle ID | Symbolischer Link |
+| `~/Library/Logs/` | App-Name | Symbolischer Link |
+| `~/Library/Saved Application State/` | App-Name | Symbolischer Link |
 
-## Tool-Verzeichnisse (Dot-Folders)
+Warum Container anders behandelt werden, erklärt [Mount-Migration](/de/datamigrae/mount-migration).
 
-AppPorts kann automatisch Dot-Folders erkennen, die von gängigen Entwicklungstools im Home-Verzeichnis des Benutzers erstellt wurden:
+## Tool-Verzeichnisse
 
-1. Wechseln Sie zum Unterreiter „Tool-Verzeichnisse" im Reiter Datenverzeichnisse
-2. Die Seite listet alle erkannten Tool-Verzeichnisse mit ihren Größen auf
-3. Jedes Verzeichnis zeigt ein Prioritäts-Badge (recommended/optional) und den Status
+AppPorts erkennt Ordner verbreiteter Entwicklungswerkzeuge im Benutzerordner, etwa `~/.npm` und `~/.gradle`:
 
-Wenn ein lokales Tool-Verzeichnis fehlt, aber der kanonische Ort auf dem ausgewählten externen Speicher noch ein von AppPorts verwaltetes Verzeichnis enthält, erscheint der Eintrag als „Neuverlinkung erforderlich". Beim Wechsel des externen Speichers scannt AppPorts die Tool-Verzeichnisse erneut und aktualisiert diesen Status. Normale Dateien werden nicht als neu verlinkbare Verzeichnisse behandelt.
+1. Wechsle unter „Datenverzeichnisse“ zu „Tool-Verzeichnisse“.
+2. Die Liste zeigt erkannte Ordner, Größe, Priorität und Status.
 
-Für die vollständige unterstützte Liste siehe [Tool-Verzeichnis-Erkennung](/de/datamigrae/tools).
+Fehlt der lokale Ordner, existiert am vorgesehenen externen Ort aber noch ein verwalteter AppPorts-Ordner, erscheint „Wartet auf erneute Verknüpfung“. Die Liste unterstützter Tools steht unter [Tool-Verzeichnisse erkennen](/de/datamigrae/tools).
 
-## Verzeichnismigration (benutzerdefinierte Ordner)
+## Eigene Ordner migrieren
 
-Der Tab „Verzeichnismigration" migriert beliebige Benutzerordner. Das ist nützlich für große Projekte, Modelle, Asset-Bibliotheken oder Tool-Caches, die in den externen Speicher verschoben werden sollen.
+„Directory Migration“ migriert beliebige Ordner unter deinem Benutzerordner, etwa große Projekte, Modelle und Mediensammlungen.
 
-1. Wechseln Sie im Hauptfenster zu „Verzeichnismigration"
-2. Klicken Sie im Header „Lokale Ordner" auf den „+"-Button
-3. Wählen Sie den lokalen Ordner und anschließend das Ziel-Stammverzeichnis im externen Speicher
-4. AppPorts verwendet `Zielstamm/lokaler Ordnername` als externes Ziel, speichert die Konfiguration und startet die Migration
+1. Öffne „Directory Migration“.
+2. Klicke neben „Local Folders“ auf „+“.
+3. Wähle den lokalen Ordner und anschließend den Zielstammordner auf dem externen Laufwerk. Das Ziel lautet `目标根目录/文件夹名`.
 
-Um rekursive Kopien, Systemverzeichnis-Migration oder die Übernahme falscher Pfade zu vermeiden, gelten diese Prüfungen:
+Geprüft wird: Der lokale Ordner muss innerhalb des Benutzerordners liegen, darf aber nicht dieser selbst sein. Weder er noch übergeordnete Pfade dürfen symbolische Links sein. Er darf verwaltete Ordner weder enthalten noch in ihnen liegen. Das externe Ziel darf nicht im Benutzerordner liegen und darf mit dem lokalen Ordner kein Enthaltensein in einer der beiden Richtungen bilden.
 
-- Der lokale Ordner muss unter dem Home-Verzeichnis des aktuellen Benutzers liegen und darf nicht das gesamte Home-Verzeichnis sein
-- Der lokale Pfad und seine übergeordneten Pfade dürfen keine symbolischen Links sein
-- Der lokale Ordner darf sich nicht mit bereits verwalteten Datenverzeichnissen oder Verzeichnismigrationseinträgen überschneiden
-- Das externe Ziel-Stammverzeichnis muss ein Ordner sein und darf nicht im Home-Verzeichnis des aktuellen Benutzers liegen
-- Das finale externe Ziel darf nicht im lokalen Ordner liegen, und der lokale Ordner darf nicht im finalen externen Ziel liegen
+Nach der Migration zeigt der lokale Bereich den ursprünglichen Pfadstatus, der externe Bereich den Status der Kopie. „Erneut verlinken“ und „Wiederherstellen“ sind verfügbar. Das Entfernen der Konfiguration löscht nur den Eintrag, keine Daten.
 
-Nach der Migration zeigt der lokale Bereich den Status des ursprünglichen Pfads, der externe Bereich den Status der externen Kopie. Wählen Sie Einträge im externen Bereich aus, um „Ordner neu verlinken" oder „Ordner wiederherstellen" auszuführen. Das Entfernen einer Konfiguration löscht nur den Eintrag aus der Migrationsliste; echte Daten werden nicht automatisch gelöscht.
+## Migration über symbolische Links
 
-## Migrationsvorgänge
+Für alle Ordner außerhalb von Containern.
 
-### Einzelverzeichnis-Migration
+1. Finde den Ordner und klicke auf „Migrate“.
+2. AppPorts kopiert extern, schreibt die Verwaltungsmarkierung, benennt den lokalen Ordner zur Sicherheitskopie um, erstellt am ursprünglichen Pfad einen Link und bereinigt zuletzt die Sicherung.
+3. Danach lautet der Status „Verknüpft“.
 
-1. Finden Sie das zu migrierende Verzeichnis in der Datenverzeichnisliste
-2. Klicken Sie rechts auf die Schaltfläche „Migrieren"
-3. AppPorts führt die folgenden Schritte aus:
-   - Verzeichnis in den externen Speicher kopieren
-   - Verwaltete Link-Metadaten schreiben
-   - Ursprüngliches lokales Verzeichnis löschen
-   - Symbolischen Link erstellen
-
-### Automatische Neuzeichnung
-
-Wenn „Automatisch neu signieren" in den Einstellungen aktiviert ist, löst die Datenverzeichnismigration automatisch die Signierung der zugehörigen App aus:
-
-1. **Vor der Migration**: Sichert die ursprüngliche Signatur des **realen externen Pfads** der zugehörigen App (nicht der lokalen Shell)
-2. **Nach der Migration**: Führt Ad-hoc-Neuzeichnung auf der **realen externen App** aus (Stillmodus; Fehler zeigen keinen Dialog)
-
-Für verknüpfte Apps löst AppPorts automatisch den realen App-Pfad hinter der Stub-Portal-Shell oder dem symbolischen Link auf und stellt sicher, dass Signaturänderungen auf das tatsächliche Anwendungspaket angewendet werden, nicht auf eine ungültige lokale Shell.
-
-::: tip 💡 Keine manuelle Aktion erforderlich
-Mit aktivierter automatischer Neuzeichnung ist der Datenverzeichnismigrations-Workflow vollständig automatisiert. Signatursicherung und Neuzeichnung betreffen beide den realen App-Pfad — keine manuelle Eingabe erforderlich.
+::: tip Nach Migration neu signieren
+Oben auf der Datenverzeichnisse-Seite gibt es „Nach Migration neu signieren“, standardmäßig ausgeschaltet. Damit wird die zugehörige App nach der Migration mit Ad-hoc neu signiert, ausschließlich gegen eine anschließende Meldung „beschädigt“. Sandbox-Apps werden übersprungen. Normalerweise ist dies unnötig; siehe [Neusignierung und Schutz vor Abstürzen](/de/datamigrae/resign).
 :::
 
-### Protokollkontext
+## Mount-Migration
 
-Datenverzeichnisoperationen (Migration, Wiederherstellung, Normalisierung, Neuverlinkung) fügen automatisch Kontextinformationen der zugehörigen App in die Protokolle ein:
+Für Ordner unter `Containers` und `Group Containers`; die Schaltfläche heißt „Mount-Migration“.
+
+1. Prüfe, dass das externe Laufwerk APFS verwendet, und beende die zugehörige App.
+2. Klicke auf „Mount-Migration“, lies die drei Hinweise im Bestätigungsfenster und fahre fort.
+3. AppPorts erstellt extern ein Volume, kopiert die Daten hinein und bindet es am ursprünglichen Ordner ein.
+4. Danach lautet der Status „Eingebunden“. Erlaube beim ersten Öffnen der App die Systemabfrage.
+
+Die vollständige Anleitung steht unter [Mount-Migration](/de/datamigrae/mount-migration).
+
+## Wiederherstellen
+
+**Über symbolische Links migrierte Ordner** mit Status „Verknüpft“: „Wiederherstellen“ kopiert die Daten lokal zurück, entfernt den symbolischen Link und anschließend die externe Kopie.
+
+**Per Mount-Migration migrierte Ordner** mit „Eingebunden“ oder „Einbindung ausstehend“: „Wiederherstellen“ kopiert die Volumedaten lokal zurück, hängt das Volume aus und entfernt es. Das Laufwerk muss verbunden bleiben.
+
+Beide Verfahren kopieren zuerst und wechseln erst danach um. Ein Fehler währenddessen führt nicht zu Datenverlust.
+
+## Ungewöhnliche Statuswerte behandeln
+
+| Status | Bedeutung | Aktion |
+|------|------|------|
+| Normalisierung nötig | AppPorts verwaltet den Link, aber der externe Pfad liegt nicht am vorgesehenen Ort | „Normalisieren“ verschiebt die Daten dorthin und erstellt den Link neu |
+| Wartet auf erneute Verknüpfung | Externe Daten sind vorhanden, der lokale Link fehlt | „Erneut verlinken“ erstellt den symbolischen Link neu |
+| Vorhandener Symlink | Nicht von AppPorts erstellt | Unter „Linkdetails“ kann die Verwaltung übernommen werden |
+| Einbindung ausstehend | Das Mount-Migrationsvolume ist erreichbar, aber nicht eingebunden | „Einbinden“ |
+| Laufwerk nicht verbunden | Datenvolume der Mount-Migration nicht gefunden | Laufwerk anschließen; AppPorts bindet automatisch wieder ein |
+
+Erneutes Verlinken und Normalisieren gelten nur für Ordner. Ist das externe Ziel eine normale Datei, hält AppPorts an und bewahrt sie.
+
+## Kontext im Protokoll
+
+Zur Diagnose enthalten Datenordner-Operationen Informationen zur zugehörigen App:
 
 | Feld | Beschreibung |
-|------|--------------|
+|------|------|
 | `app_name` | Name der zugehörigen App |
-| `app_status` | App-Status (Verknüpft, Lokal usw.) |
+| `app_status` | App-Status |
 | `app_is_resigned` | Ob die App neu signiert wurde |
-| `app_bundle_id` | Bundle ID der App (aus realem Pfad gelesen) |
-| `app_real_path` | Realer externer Pfad der App |
+| `app_bundle_id` | Bundle ID der tatsächlichen App |
+| `app_real_path` | Pfad der tatsächlichen App |
 
-Diese Felder helfen bei der Export von Diagnosepaketen, Probleme genauer zu lokalisieren.
-
-### Batch-Migration
-
-1. Aktivieren Sie mehrere Verzeichnisse in der Tool-Verzeichnisliste
-2. Klicken Sie unten auf die Schaltfläche „Batch-Migration"
-3. AppPorts führt die Migration nacheinander aus
-
-::: tip 💡 Prioritätsempfehlungen
-Datenverzeichnisse werden in drei Prioritätsstufen eingeteilt:
-
-- **Kritisch** (`critical`): Muss nach der Migration funktionieren; beeinflusst die Kernfunktionalität der Anwendung
-- **Empfohlen** (`recommended`): Große Speicherersparnis; hoher Migrationsnutzen
-- **Optional** (`optional`): Kleine Größe oder wiederherstellbar
-
-Es wird empfohlen, zuerst Verzeichnisse zu migrieren, die als „Empfohlen" markiert sind.
-:::
-
-## Wiederherstellungsvorgänge
-
-1. Finden Sie das migrierte Verzeichnis in der Datenverzeichnisliste (Status: „Verknüpft")
-2. Klicken Sie rechts auf die Schaltfläche „Wiederherstellen"
-3. AppPorts führt die folgenden Schritte aus:
-   - Lokalen symbolischen Link löschen
-   - Daten vom externen Speicher zurück in den lokalen Speicher kopieren
-   - Externes Verzeichnis löschen (best effort)
-
-## Umgang mit abnormalen Zuständen
-
-### Normalisierung erforderlich
-
-Das Verzeichnis wird von AppPorts verwaltet, aber der externe Pfad befindet sich nicht am kanonischen Ort. Klicken Sie auf „Normalisieren"; AppPorts verschiebt die externen Daten zum kanonischen Pfad und erstellt den symbolischen Link neu.
-
-### Neuverlinkung erforderlich
-
-Das Datenverzeichnis ist auf dem externen Speicher noch vorhanden, aber der lokale symbolische Link ist verloren. Klicken Sie auf „Neuverlinken"; AppPorts erstellt den symbolischen Link neu. Neuverlinkung gilt nur, wenn das externe Ziel weiterhin ein Verzeichnis ist. Wenn eine normale Datei das externe Ziel belegt, stoppt AppPorts den Vorgang und lässt die Datei unverändert.
-
-### Vorhandener Soft Link
-
-Ein vom Benutzer erstellter symbolischer Link, der nicht von AppPorts erstellt wurde. Sie können „Übernehmen" wählen; AppPorts schreibt verwaltete Link-Metadaten und verwaltet es fortan.
+Mount-Migration protokolliert zusätzlich Volumename, Volume UUID und die Ausgabe der `diskutil`-Befehle.
 
 ## Baumansicht
 
-Für Datenverzeichnisse, die Unterverzeichnisse enthalten (z. B. mehrere App-Verzeichnisse unter `Application Support`), bietet AppPorts eine Baumgruppierungsansicht:
-
-- Das übergeordnete Verzeichnis zeigt links Erweitern/Zusammenklappen-Pfeile an
-- Unterverzeichnisse werden mit hierarchischer Einrückung angezeigt
-- Jeder Knoten zeigt unabhängig Größe und Status an
-- Migrations-/Wiederherstellungsvorgänge können an einzelnen Unterverzeichnissen durchgeführt werden
+Ordner mit Unterordnern erscheinen als Baum: links ein Pfeil zum Aufklappen, eingerückte Unterordner und pro Knoten eigene Größen-, Status- und Aktionsanzeigen.

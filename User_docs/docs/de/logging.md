@@ -14,7 +14,7 @@ Die folgenden Informationen werden bei jedem App-Start aufgezeichnet:
 
 | Element | Beschreibung |
 |---------|--------------|
-| Sitzungs-ID | Eindeutiger Kennung für diesen Lauf (8-stelliges UUID-Präfix) |
+| Sitzungs-ID | Eindeutige Kennung für diesen Lauf (8-stelliges UUID-Präfix) |
 | Prozess-ID | Systemprozess-Kennung |
 | Bundle ID | App-Kennung |
 | App-Sprache | Aktuell ausgewählter Sprachcode |
@@ -28,7 +28,7 @@ Die folgenden Informationen werden bei jedem App-Start aufgezeichnet:
 |---------|--------------|
 | App-Version | Versionsnummer und Build-Nummer |
 | macOS-Version | Systemversion und Marketing-Name (z. B. „macOS Sequoia 15.x") |
-| Gerätemodell | Modell und benutzerfreundlicher Name (z. B. „MacBook Pro (14 Zoll, M3 Pro, 2023)") |
+| Gerätemodell | Modell und benutzerfreundlicher Name (z. B. „MacBook Pro (14-inch, M3 Pro, 2023)") |
 | Prozessorinformationen | Markenzeichenkette, Kernanzahl, aktive Kernanzahl |
 | Physischer Speicher | Gesamtspeicher |
 
@@ -64,7 +64,7 @@ Jeder Migrationsvorgang erzeugt eine eindeutige Operations-ID (z. B. `data-migra
 | Datengröße | Migrierte Datenmenge |
 | Dauer | Migrationsdauer (Sekunden) |
 | Übertragungsrate | Übertragungsrate (MB/s) |
-| Quellpfad / Zielpfad | Migrationsstart- und Endpfade
+| Quellpfad / Zielpfad | Migrationsstart- und Endpfade |
 
 ### Fehlerdetails
 
@@ -86,9 +86,16 @@ Fehlerprotokolle enthalten strukturierte Informationen:
 | Fehlercode | Bedeutung |
 |------------|-----------|
 | `BACKUP-SIGNATURE-FAILED` | Signatursicherung fehlgeschlagen |
-| `RESIGN-FAILED` | Neuzeichnung fehlgeschlagen (App kann macOS-Signaturprüfung nicht bestehen) |
-| `DATA-RESIGN-FAILED` | Automatische Neuzeichnung nach Datenverzeichnismigration fehlgeschlagen |
-| `DATA-BACKUP-SIGNATURE-FAILED` | Signatursicherung vor Datenverzeichnismigration fehlgeschlagen (ursprüngliche Signatur kann später nicht wiederhergestellt werden) |
+| `APP-MOVE-DESTINATION-CONFLICT` | Das Migrationsziel der App existiert bereits; ein sicheres Ersetzen kann nicht bestätigt werden |
+| `APP-RESTORE-LOCAL-CONFLICT` | Beim Zurückholen auf den Mac wurde ein gleichnamiges lokales Objekt gefunden, das nicht automatisch überschrieben werden kann |
+| `DATA-MIGRATE-DESTINATION-CONFLICT` | Das Ziel der Datenverzeichnismigration existiert bereits, und die Metadaten stimmen nicht vollständig überein |
+| `RESIGN-FAILED` | Erneutes Signieren fehlgeschlagen; die App besteht möglicherweise die macOS-Signaturprüfung nicht |
+| `DATA-RESIGN-FAILED` | Automatisches erneutes Signieren nach der Datenverzeichnismigration fehlgeschlagen |
+| `RESIGN-REFUSED-SANDBOXED` | Erneutes Signieren einer Sandbox-App verweigert |
+| `RESTORE-SIGNATURE-IDENTITY-UNAVAILABLE` | Das ursprüngliche Signaturzertifikat ist auf diesem Mac nicht vorhanden; Wiederherstellung verweigert |
+| `CONTAINER-MOUNT-*` | Fehler in einer Phase der Mount-Migration, etwa `CONTAINER-MOUNT-EXTERNAL-NOT-APFS` oder `CONTAINER-MOUNT-SWITCH-FAILED` |
+| `CONTAINER-RESTORE-*` | Fehler in einer Phase der Wiederherstellung eines per Mount-Migration verschobenen Verzeichnisses |
+| `DATA-BACKUP-SIGNATURE-FAILED` | Signatursicherung vor der Datenverzeichnismigration fehlgeschlagen; bei einer späteren Wiederherstellung steht die ursprüngliche Identität nicht zur Verfügung |
 
 ### Datenverzeichnis-Operationskontext
 
@@ -127,15 +134,15 @@ Standardprotokollpfad:
 
 Kann angepasst werden über:
 
-- Menüleiste → Protokolle → Protokollort festlegen
-- Einstellungen → Protokollierungs-Einstellungen → Benutzerdefinierter Pfad
+- Menüleiste → Protokolle → Protokollspeicherort festlegen...
+- Einstellungen → Protokolleinstellungen → Benutzerdefinierter Pfad
 
 ### Protokollformat
 
 ```text
-[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] App gestartet
+[2026-05-08 09:30:00] [INFO] [session:a1b2c3d4] [pid:12345] 应用启动
 [2026-05-08 09:30:01] [DIAG] [session:a1b2c3d4] [pid:12345]   app_version: 1.6.1 (123)
-[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   Migration abgeschlossen: 2.3 GB, 45.2 MB/s, 52.1s
+[2026-05-08 09:30:05] [PERF] [session:a1b2c3d4] [pid:12345]   迁移完成: 2.3 GB, 45.2 MB/s, 52.1s
 ```
 
 ### Protokollebenen
@@ -171,13 +178,13 @@ Wenn Probleme auftreten, die Feedback erfordern, exportieren Sie bitte ein Diagn
 **Methode 2: Einstellungsseite**
 
 1. AppPorts → Einstellungen öffnen (oben rechts)
-2. Den Abschnitt „Protokollierungs-Einstellungen" finden
+2. Den Abschnitt „Protokolleinstellungen" finden
 3. Auf die Schaltfläche „Diagnosepaket exportieren" klicken
 4. Speicherort wählen
 
 ### Diagnosepaket-Inhalt
 
-Das exportierte `AppPorts-Diagnostic-<Datum_Uhrzeit>.zip` enthält:
+Das exportierte `AppPorts-Diagnostic-<日期时间>.zip` enthält:
 
 | Datei | Format | Beschreibung |
 |-------|--------|--------------|

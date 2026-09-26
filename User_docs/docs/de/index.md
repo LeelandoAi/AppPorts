@@ -4,8 +4,8 @@ layout: home
 
 hero:
   name: "AppPorts"
-  text: "App-Migrationstool"
-  tagline: "App-Migrationstool für macOS"
+  text: "Externe Laufwerke retten die Welt"
+  tagline: "Große Apps und Datenverzeichnisse auf externen Speicher migrieren, automatisch lokale Zugänge erstellen und wertvollen Platz auf dem Mac freigeben"
   actions:
     - theme: brand
       text: "Schnellstart"
@@ -20,14 +20,14 @@ hero:
 
 features:
   - icon: 🔄
-    title: "Badge-freie Migration"
-    details: "Ein-Klick-Migration großer Apps auf externe Laufwerke. Keine Verknüpfungspfeile im Finder; Launchpad und App-Menü funktionieren normal."
+    title: "Migration ohne Verknüpfungspfeil"
+    details: "Große Apps mit einem Klick auf externen Speicher migrieren. Lokal bleibt eine schlanke Launcher-Hülle, Finder zeigt keinen Verknüpfungspfeil an, und Launchpad sowie App-Menüs zeigen die App normal an."
   - icon: 🔒
-    title: "Auto-Update-Schutz"
-    details: "Erkennt automatisch Sparkle- und Electron-Selbstupdate-Apps. Die Sperrmigration verhindert, dass externe Apps durch Updater beschädigt werden."
+    title: "Schutz vor automatischen Updates"
+    details: "Erkennt Apps mit eigenen Updatern wie Sparkle und Electron und bietet „Gesperrte Migration“ an. Ist die lokale App neuer als die externe Kopie, erscheint „Ausstehende Auslagerung“."
   - icon: 📦
-    title: "Datenverzeichnisverwaltung"
-    details: "Migrieren Sie ~/Library/-Unterverzeichnisse, ~/.npm und mehr auf externen Speicher mit Baumansicht, Suche und Sortierung."
+    title: "Verwaltung von Datenverzeichnissen"
+    details: "Unterverzeichnisse von ~/Library/, ~/.npm und weitere Datenverzeichnisse auf externen Speicher migrieren. Sandbox-Containerdaten wie WeChat-Chatverläufe werden per Mount-Migration auf ein externes APFS-Laufwerk verschoben; die Signatur bleibt unverändert."
 ---
 
 <script setup lang="ts">

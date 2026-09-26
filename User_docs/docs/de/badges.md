@@ -4,81 +4,99 @@ outline: deep
 
 # Status-Badges
 
-AppPorts zeigt den aktuellen Status von Apps und Datenverzeichnissen mit kapselförmigen farbigen Badges an. Einige Badges sind anklickbar für detaillierte Informationen.
+AppPorts zeigt den Status von Apps und Datenverzeichnissen mit farbigen, kapselförmigen Badges an. Einige Badges lassen sich anklicken, um weitere Erklärungen oder Handlungsempfehlungen zu öffnen.
 
-## App-Status-Badges
+## App-Status
 
-### Linkstatus
+### Verknüpfungsstatus
 
-| Badge | Icon | Farbe | Bedeutung |
-|-------|------|-------|-----------|
-| Verknüpft | `link` | Grün | App in den externen Speicher migriert mit lokalem Eintrag |
-| Gesperrte Migration | `lock.fill` | Grün | Verknüpft und mit `uchg` gesperrt, verhindert Beschädigung der externen App durch Selbstupdates |
-| Entsperre Migration | `lock.open` | Orange | Verknüpft aber nicht gesperrt; In-App-Updates können die externe App löschen |
-| Teilweise verknüpft | `link.badge.plus` | Gelb | Teilweise App-Komponenten verknüpft (z. B. einige `.app`-Dateien in einem Verzeichnis) |
-| Verwaister Link | `link.badge.exclamationmark` | Rot | Externe Speicher-App verloren, aber lokaler Eintrag vorhanden |
-| Nicht verknüpft | `externaldrive.badge.xmark` | Orange | App auf externem Speicher, aber lokal nicht verknüpft |
-| Extern | `externaldrive` | Orange | App auf externem Speicher ohne lokalen Eintrag |
-| Ausstehendes Herausverschieben | `arrow.up.right.circle` | Cyan | Die echte lokale App ist neuer als die alte externe Kopie und kann nach extern verschoben werden, um sie zu ersetzen |
-| Lokal | `macmini` | Sekundärfarbe | Normale lokale App, nicht migriert; wird angezeigt, wenn keine anderen Tags vorhanden sind |
+| Badge | Symbol | Farbe | Bedeutung |
+|------|------|------|------|
+| Verknüpft | `link` | Grün | Die App wurde auf externen Speicher migriert und ein lokaler Zugang erstellt |
+| Gesperrte Migration | `lock.fill` | Grün | Die App ist verknüpft und mit `uchg` gesperrt, damit eigene Updater die externe Kopie nicht beschädigen |
+| Ungesperrte Migration | `lock.open` | Orange | Die App ist verknüpft, aber nicht gesperrt. Updates innerhalb der App können die externe Kopie löschen oder überschreiben |
+| Teilweise verknüpft | `link.badge.plus` | Gelb | Nur einige Bestandteile sind verknüpft, etwa einzelne `.app`-Pakete in einem Verzeichnis |
+| Verwaister Link | `link.badge.exclamationmark` | Rot | Die App auf dem externen Speicher fehlt, doch der lokale Zugang existiert noch |
+| Nicht verknüpft | `externaldrive.badge.xmark` | Orange | Die App liegt auf externem Speicher und ist noch nicht lokal verknüpft |
+| Extern | `externaldrive` | Orange | Die App liegt auf externem Speicher und hat keinen lokalen Zugang |
+| Ausstehende Auslagerung | `arrow.up.right.circle` | Cyan | Die echte lokale App ist neuer als die gleichnamige externe Kopie und kann diese durch eine erneute Migration ersetzen |
+| Lokal | `macmini` | Sekundärfarbe | Normale lokale, nicht migrierte App. Wird angezeigt, wenn keine anderen Badges zutreffen |
 
-::: tip Erkennung von ausstehendem Herausverschieben
-AppPorts gleicht lokale und externe Apps zuerst per Bundle ID ab und nutzt bei Bedarf den normalisierten App-Namen als Fallback. Der Status erscheint nur, wenn beide Versionen vergleichbar sind und die lokale Version neuer ist.
+::: tip Wann erscheint „Ausstehende Auslagerung“?
+AppPorts gleicht lokale und externe Apps zuerst anhand der Bundle ID ab und verwendet bei Bedarf den normalisierten App-Namen als Rückfallmethode. „Ausstehende Auslagerung“ erscheint nur, wenn beide Versionsnummern vergleichbar sind und die lokale Version neuer ist. Fehlen Versionsangaben, sind ihre Formate nicht vergleichbar oder unterscheiden sich die Bundle IDs gleichnamiger Apps, bleibt der normale lokale Status bestehen. So wird ein versehentliches Überschreiben der externen App vermieden.
 :::
 
-### Framework-Labels
+### Framework-Badges
 
-| Badge | Icon | Farbe | Bedeutung | Klickaktion |
-|-------|------|-------|-----------|-------------|
-| Sparkle | `arrow.triangle.2.circlepath` | Cyan | Verwendet Sparkle-Framework für Auto-Updates | Nach Migration in den externen Speicher können In-App-Updates zum Verlust der externen App führen; gesperrte Migration empfohlen |
-| Electron | `atom` | Indigo | Basiert auf Electron-Framework mit Auto-Update-Unterstützung | Nach Migration in den externen Speicher können In-App-Updates zum Verlust der externen App führen; gesperrte Migration empfohlen |
+| Badge | Symbol | Farbe | Bedeutung | Erklärung beim Anklicken |
+|------|------|------|------|----------|
+| Sparkle | `arrow.triangle.2.circlepath` | Cyan | Verwendet Sparkle für automatische Updates | Nach der Migration können Updates innerhalb der App zum Verlust der externen Kopie führen. „Gesperrte Migration“ wird empfohlen |
+| Electron | `atom` | Indigo | Basiert auf Electron und unterstützt möglicherweise automatische Updates | Nach der Migration können Updates innerhalb der App zum Verlust der externen Kopie führen. „Gesperrte Migration“ wird empfohlen |
 
-### Typ-Labels
+### App-Typen
 
-| Badge | Icon | Farbe | Bedeutung |
-|-------|------|-------|-----------|
-| Läuft | `play.fill` | Lila | App wird gerade ausgeführt |
-| System | `lock.fill` | Grau | macOS-Systemanwendung |
-| Nicht-nativ | `iphone` | Pink | iOS/iPadOS-App (läuft über Apple Silicon) |
-| Store | `applelogo` | Blau | Mac App Store-Anwendung |
+| Badge | Symbol | Farbe | Bedeutung |
+|------|------|------|------|
+| Läuft | `play.fill` | Violett | Die App läuft gerade |
+| System | `lock.fill` | Grau | macOS-System-App |
+| Nicht-nativ | `iphone` | Rosa | iOS-/iPadOS-App, die auf Apple Silicon ausgeführt wird |
+| Store | `applelogo` | Blau | App aus dem Mac App Store |
 
-### Spezielle Labels
+### Besondere Badges
 
-| Badge | Icon | Farbe | Bedeutung |
-|-------|------|-------|-----------|
-| Neu signiert | `seal.fill` | Cyan | App wurde Ad-hoc neu signiert (ausgeführt, wenn nach der Migration „Beschädigt" erscheint) |
+| Badge | Symbol | Farbe | Bedeutung |
+|------|------|------|------|
+| Neu signiert | `seal.fill` | Cyan | Die App hat derzeit eine Ad-hoc-Signatur, und AppPorts besitzt eine Signatursicherung |
+| Signatur ersetzt | `exclamationmark.shield.fill` | Rot | AppPorts hat die Entwicklersignatur durch eine Ad-hoc-Signatur ersetzt. Unter macOS 27 lässt sich die App möglicherweise nicht öffnen. Anklicken zeigt weitere Informationen; „Reparaturschritte anzeigen“ im Kontextmenü öffnet die Reparaturansicht. Siehe [Upgrade auf macOS 27](/de/macos-27) |
 
-::: tip 💡 Spezieller Hinweis zum Store-Label
-Wenn eine App die folgenden Bedingungen erfüllt, wird das „Store"-Label anklickbar und zeigt macOS 15.1+ native Installationsanweisungen an:
-- App befindet sich im `/Volumes/{Laufwerk}/Applications/`-Verzeichnis auf dem externen Speicher
-- Wird nativ von macOS verwaltet; der App Store kann inkrementelle Updates direkt in diesem Verzeichnis durchführen
+::: tip Unterschied zwischen „Neu signiert“ und „Signatur ersetzt“
+Beide bedeuten, dass die App derzeit eine Ad-hoc-Signatur hat. Der Unterschied ist die **ursprüngliche Signatur**. Bei „Neu signiert“ hatte die App bereits vorher keine Entwicklersignatur, oder diese lässt sich nicht mehr feststellen. Das erneute Signieren ermöglicht ihr normales Öffnen. Bei „Signatur ersetzt“ wurde eine vorhandene Entwicklersignatur durch eine Ad-hoc-Signatur ersetzt. Sandbox-Apps lassen sich deshalb unter macOS 27 möglicherweise nicht öffnen. AppPorts kennzeichnet sie rot und bietet eine Reparatur an.
 :::
 
-## Datenverzeichnis-Status-Badges
+::: tip Besonderheit des Badges „Store“
+Wenn die folgenden Bedingungen erfüllt sind, lässt sich „Store“ anklicken und zeigt Informationen zur nativen Installation auf externem Speicher ab macOS 15.1:
+
+- Die App liegt im Verzeichnis `/Volumes/{drive}/Applications/` des externen Speichers.
+- macOS verwaltet die App nativ, und der App Store kann in diesem Verzeichnis direkt inkrementelle Updates ausführen.
+:::
+
+## Status von Datenverzeichnissen
 
 | Status | Farbe | Bedeutung |
-|--------|-------|-----------|
-| Lokal | Sekundärfarbe | Verzeichnis auf lokalem Speicher, nicht migriert |
-| Verknüpft | Grün | In den externen Speicher migriert; lokal ist ein symbolischer Link |
-| Normalisierung erforderlich | Gelb | Von AppPorts verwalteter Link, aber externer Pfad nicht am kanonischen Ort; „Normalisieren"-Operation empfohlen |
-| Neuverlinkung erforderlich | Orange | Externe Speicherdaten vorhanden, aber lokaler symbolischer Link verloren; „Neuverlinken"-Operation empfohlen |
-| Vorhandener Soft Link | Blau | Vom Benutzer erstellter symbolischer Link (nicht von AppPorts erstellt); Option zur Übernahme der Verwaltung |
+|------|------|------|
+| Lokal | Sekundärfarbe | Das Verzeichnis liegt lokal und wurde nicht migriert. Ein Schild neben einem Containerverzeichnis weist auf die Mount-Migration hin |
+| Verknüpft | Grün | Migration per symbolischem Link abgeschlossen; der lokale Link verweist auf das externe Laufwerk |
+| Eingebunden | Violett | Mount-Migration abgeschlossen; das externe Volume ist am ursprünglichen Verzeichnis eingebunden |
+| Einbindung ausstehend | Orange | Das Volume der Mount-Migration ist verfügbar, aber nicht eingebunden. Klicken Sie auf „Einbinden“ |
+| Laufwerk nicht verbunden | Rot | Das Datenvolume der Mount-Migration wurde nicht gefunden. Meist ist das externe Laufwerk nicht angeschlossen; nach dem Anschließen bindet AppPorts es automatisch wieder ein |
+| Normalisierung nötig | Gelb | Ein von AppPorts verwalteter Link verweist auf einen nicht standardmäßigen externen Pfad. „Normalisieren“ kann ihn korrigieren |
+| Wartet auf erneute Verknüpfung | Orange | Die externen Daten sind noch vorhanden, aber der lokale Link fehlt. Verwenden Sie „Erneut verlinken“ |
+| Vorhandener Symlink | Blau | Der symbolische Link wurde nicht von AppPorts erstellt und kann in die Verwaltung übernommen werden |
 
-## App-Status-Kombinationen
+## Beispiele für kombinierte App-Badges
 
-Eine App kann gleichzeitig mehrere Badges anzeigen:
-
-```text
-[Verknüpft] [Sparkle] [Läuft]
-```
-Bedeutung: App in den externen Speicher migriert, verwendet Sparkle Auto-Update-Framework, wird gerade ausgeführt.
+Eine App kann mehrere Badges gleichzeitig anzeigen:
 
 ```text
-[Extern] [Store] [Nicht-nativ]
+[已链接] [Sparkle] [运行中]
 ```
-Bedeutung: iOS-App (Mac-Version) auf externem Speicher, über App Store installiert.
+
+Bedeutung: Die App wurde auf externen Speicher migriert, verwendet Sparkle für automatische Updates und läuft gerade.
 
 ```text
-[Verwaister Link]
+[外部] [商店] [非原生]
 ```
-Bedeutung: Externe Speicher-App verloren oder entfernt, aber lokaler Eintrag noch vorhanden. Manuelle Entlinkung erforderlich.
+
+Bedeutung: Eine über den App Store installierte iOS-App für Mac liegt auf externem Speicher.
+
+```text
+[孤立链接]
+```
+
+Bedeutung: Die externe App fehlt oder wurde entfernt, während der lokale Zugang noch besteht. Die Verknüpfung muss manuell entfernt werden.
+
+```text
+[待迁出]
+```
+
+Bedeutung: Lokal liegt die neuere echte App, extern noch eine ältere Kopie. Eine erneute Migration kann die lokale Version auslagern und die ältere externe Kopie ersetzen.

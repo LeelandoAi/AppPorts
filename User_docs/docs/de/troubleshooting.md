@@ -4,100 +4,99 @@ outline: deep
 
 # Fehlerbehebung
 
-## Migrationsunterbrechung
+## Doppelklick ohne Reaktion, Symbol verschwindet sofort
 
-### Symptome
+Am häufigsten wurde die App von AppPorts neu signiert und darf nach dem Upgrade auf macOS 27 nicht mehr auf ihren eigenen Container zugreifen. Nicht jede neu signierte App ist betroffen; WeChat ist bestätigt. Die Daten sind nicht beschädigt.
 
-Migration wurde durch Trennung des externen Speichers, Systemabsturz oder App-Zwangsbeendigung unterbrochen.
+So prüfst du es:
 
-### Lösung
+```bash
+codesign -dv --verbose=4 /Applications/<应用名>.app 2>&1 | grep -E "Signature|TeamIdentifier"
+# 出现 Signature=adhoc 和 TeamIdentifier=not set 即是
+```
 
-AppPorts hat einen eingebauten Auto-Wiederherstellungsmechanismus. Nach dem Neustart von AppPorts:
+Reparatur: Containerdaten wiederherstellen → aus offizieller Quelle neu installieren → bei Bedarf Mount-Migration. **Signiere nicht erneut** und betrachte die Datenwiederherstellung allein nicht als Reparatur. Die vollständige Anleitung steht unter [Upgrade auf macOS 27](/de/macos-27#reparatur).
 
-1. Erkennt verbleibende Migrationsdaten (externe Kopie vorhanden, aber lokaler symbolischer Link nicht erstellt)
-2. Prüft `.appports-link-metadata.plist` im externen Verzeichnis
-3. Nur wenn `schemaVersion`, `managedBy`, `sourcePath`, `destinationPath` und `dataDirType` vollständig übereinstimmen, wird die Wiederherstellung oder Neuverlinkung fortgesetzt
-4. Stimmen die Metadaten nicht überein, stoppt AppPorts die automatische Verarbeitung und erhält die vorhandenen Daten zur manuellen Prüfung
+## Mount-Migration schlägt fehl
 
-::: tip 💡 Kein manueller Eingriff erforderlich
-Der Auto-Wiederherstellungsmechanismus von AppPorts behandelt unterbrochene Migrationen beim nächsten Start. Falls die Auto-Wiederherstellung fehlschlägt, sehen Sie möglicherweise den Status „Normalisierung erforderlich" oder „Neuverlinkung erforderlich" in der Datenverzeichnisliste — führen Sie einfach die entsprechende Operation manuell aus.
-:::
+| Meldung | Ursache | Vorgehen |
+|------|------|------|
+| Externer Speicher verwendet kein APFS | exFAT / NTFS / HFS+ | Du kannst alles so belassen: Containerdaten bleiben lokal, anderes lässt sich weiter migrieren. Verwende später ein anderes APFS-Laufwerk oder [bereite APFS vor](/de/why-apfs#prepare-apfs). Systemwerkzeuge können exFAT nicht direkt verkleinern |
+| Externer Speicher ist verschlüsselt | Verschlüsseltes APFS; das neue Volume übernimmt das Passwort nicht | So belassen oder unverschlüsseltes APFS wählen. Siehe [Verschlüsselte externe Laufwerke](/de/why-apfs#encrypted-drives) |
+| Zu wenig Platz | Extern bei Migration oder lokal bei Wiederherstellung | Platz schaffen und erneut versuchen. Die Prüfung erfolgt vor Volumeerstellung oder Kopieren; keine Daten wurden verändert |
+| Festplattenbefehl fehlgeschlagen … `kDAReturnNotPrivileged` | Ältere Systeme wie macOS 12 erlauben normalen Nutzern keine eigenen Mountpfade | AppPorts versucht es mit dem Administratorpasswortdialog erneut. Vor 1.8.2 gab es diesen Schritt nicht |
+| Administratorautorisierung abgebrochen | Passwortdialog abgebrochen | Vorgang erneut ausführen |
+| Mountpunkt ist nicht leer | Die App hat ohne eingebundenes Volume lokal Dateien geschrieben | Dateien verschieben, dann „Einbinden“ wählen |
+| Prüfung nach dem Einbinden fehlgeschlagen | Volume liegt nicht am erwarteten Pfad | Diagnosepaket exportieren und ein Issue melden |
+| Externes Volume nicht gefunden | Laufwerk fehlt oder Volume wurde gelöscht | Laufwerk anschließen und aktualisieren. Die Daten eines gelöschten Volumes sind nicht wiederherstellbar |
+
+Bei Fehlern rollt AppPorts zurück: Das neue Volume wird entfernt und der ursprüngliche Ordner zurückbenannt. Im Festplattendienstprogramm kannst du prüfen, dass keine übrigen Volumes mit Präfix `AppPorts-` vorhanden sind.
+
+## App sieht nach Mount-Migration keine Daten
+
+Prüfe in dieser Reihenfolge:
+
+1. **Laufwerk angeschlossen und Volume eingebunden:** Unter „App Data“ sollte der Ordner „Eingebunden“ anzeigen. Bei „Einbindung ausstehend“ klicke auf „Einbinden“, bei „Laufwerk nicht verbunden“ schließe das Laufwerk an.
+2. **Zugriffsabfrage abgelehnt:** Unter Systemeinstellungen → Datenschutz & Sicherheit → Dateien und Ordner für die App „Wechselmedien“ aktivieren. Alternativ mit `tccutil reset SystemPolicyRemovableVolumes <Bundle ID>` im Terminal die nächste Abfrage erneut ermöglichen.
+3. **Mitgelieferte System-App:** Apps unter `/System/Applications` erhalten keine Abfrage und werden direkt abgewiesen. Ihre Datenmigration wird nicht unterstützt.
+4. Systemprotokoll prüfen:
+
+   ```bash
+   log show --last 2m --style compact 2>/dev/null | grep -E "deny\(1\)|RemovableVolumes"
+   ```
+
+   `kTCCServiceSystemPolicyRemovableVolumes` verweist auf Punkt 2.
+
+## App startet nach der Migration nicht
+
+1. Prüfe, ob das externe Laufwerk angeschlossen ist.
+2. „Verwaister Link“ bedeutet, dass die externe App fehlt; hebe die Verknüpfung auf.
+3. Bei „beschädigt“ zuerst neu installieren. Erst danach „Diese App neu signieren“ im Kontextmenü erwägen. Sandbox-Apps werden abgelehnt. Siehe [Neusignierung und Schutz vor Abstürzen](/de/datamigrae/resign).
+4. Bei mit `uchg` gesperrten Apps können Selbstupdater nicht funktionieren; das ist beabsichtigt.
+5. Menüleiste → „Protokolle“ → „Im Finder anzeigen“; suche nach zugehörigen Fehlern.
+6. Wähle in „Externes Laufwerk“ die Aktion „Zurück auf diesen Mac“, um das Laufwerk als Ursache einzugrenzen.
+
+## Signatur lässt sich nicht wiederherstellen
+
+| Ursache | Vorgehen |
+|------|------|
+| Sicherungsdatei fehlt | Kein Wiederherstellungsdatensatz vorhanden; offiziell neu installieren. Datensätze können auch bereits bereinigt worden sein und beweisen nicht, ob neu signiert wurde |
+| Alte Sicherung enthält keine Original-App | Offizielle Original-`.app` derselben Version wählen oder neu installieren. Neue vollständige Sicherungen benötigen keinen privaten Entwicklerschlüssel |
+| App aktualisiert oder Sicherungsprüfung fehlgeschlagen | App und Sicherung behalten; nicht überschreiben. Passendes offizielles Original wählen oder neu installieren |
+| Systemschutz verhindert Ersetzen | App und Sicherung behalten; über App Store oder offiziellen Installer neu installieren |
+| App gehört root | Administratorpasswortdialog zum Ändern des Eigentümers; Abbrechen lässt den Vorgang scheitern |
+| Sandbox-App | Neusignierung standardmäßig verweigert. Nach klassischer Neusignierung zuerst Containerdaten, dann Originalsignatur wiederherstellen |
+
+## Migration unterbrochen
+
+Bei getrenntem Laufwerk, Systemabsturz oder erzwungenem Beenden von AppPorts:
+
+- **Symbolische Links:** Öffne AppPorts erneut. Es prüft `.appports-link-metadata.plist` im externen Ordner. Bei vollständiger Übereinstimmung wird fortgesetzt, sonst auf deine Prüfung gewartet. Achte auf „Normalisierung nötig“ oder „Wartet auf erneute Verknüpfung“.
+- **Mount-Migration:** Fehler während des Ablaufs werden zurückgerollt. Wurde AppPorts selbst erzwungen beendet, prüfe nach dem Neustart den ursprünglichen Ordner. Ist er vorhanden, ist er intakt; zusätzliche `AppPorts-`-Volumes können im Festplattendienstprogramm entfernt werden. Wurde er zu `.appports-migration-backup-*` umbenannt, gib ihm den ursprünglichen Namen zurück.
 
 ## Externer Speicher offline
 
-### Symptome
+- Symbolisch verlinkte Ordner: Das Ziel ist ungültig, die App kann die Daten nicht lesen.
+- Per Mount-Migration migrierte Ordner: Sie erscheinen leer; die App schreibt keine lokalen Daten.
+- App selbst: Die lokale Startapp kann die externe App nicht öffnen, stürzt aber selbst nicht ab.
 
-Nach dem Abstecken oder Trennen des externen Speichers können migrierte Apps nicht gestartet werden, und Datenverzeichnisse zeigen roten Fehlerstatus an.
+Nach erneutem Anschließen scannt AppPorts automatisch neu und bindet die Volumes wieder ein. Ältere Systeme benötigen einmal das Administratorpasswort.
 
-### Lösung
+## App Store-App lässt sich nicht extern migrieren
 
-1. Externen Speicher wieder verbinden
-2. AppPorts' `FolderMonitor` erkennt automatisch das Einhängen des Speichervolumes und löst einen erneuten Scan aus
-3. Apps und Datenverzeichnisse nehmen den normalen Gebrauch wieder auf
+**Vor macOS 15.1:** Keine native externe Installation. Aktiviere in AppPorts „Migration von Mac App Store-Apps erlauben“ und migriere manuell. Nach App-Updates ist eine erneute Migration nötig.
 
-::: warning ⚠️ Hinweis
-Während der externe Speicher offline ist, schlagen lokale Einträge (Stub Portal), die `open` aufrufen, fehl; Apps können nicht gestartet werden, stürzen aber nicht ab. Datenverzeichnis-Symbolische Links zeigen auf ungültige Pfade; assoziierte Apps können möglicherweise keine Daten lesen.
-:::
+**Ab macOS 15.1:** Aktiviere in den App Store-Einstellungen die Option zum Laden und Installieren großer Apps auf einem separaten Laufwerk und wähle dasselbe Laufwerk wie in AppPorts.
 
-## Signaturwiederherstellung fehlgeschlagen
+## Ziel existiert bereits
 
-### Symptome
+- **Apps:** Wenn das Ziel weder die alte Kopie zu „Ausstehende Auslagerung“ noch ein erkanntes altes AppPorts-Portal ist, stoppt AppPorts. Prüfe das Ziel im Finder, bevor du entscheidest.
+- **Datenordner:** Ohne passende AppPorts-Markierung erfolgt keine automatische Übernahme; ähnliche Größen rechtfertigen kein Überschreiben. Inhalte prüfen und manuell behandeln.
+- **Lokale Wiederherstellung:** Eine echte lokale App gleichen Namens oder ein Link zu einer anderen externen App wird nicht überschrieben.
 
-Der Versuch, die ursprüngliche Signatur wiederherzustellen, schlägt fehl, oder die App zeigt nach der Wiederherstellung immer noch „Beschädigt" an.
+## Datenordnerliste wird falsch angezeigt
 
-### Mögliche Ursachen & Lösung
-
-| Ursache | Lösung |
-|---------|--------|
-| Sicherungsdatei existiert nicht | Ursprüngliche Signatur kann nicht wiederhergestellt werden; Ad-hoc-Neuzeichnung als Alternative ausführen |
-| Ursprüngliches Entwicklerzertifikat nicht in lokaler Keychain | AppPorts weicht automatisch auf Ad-hoc-Signierung aus; App kann starten, aber Keychain-Zugriff kann abnormal sein |
-| Mac App Store-App (SIP-Schutz) | Kann nicht neu signiert werden; SIP verhindert jegliche Änderung an System-App-Signaturen |
-| App-Verzeichnis ist Root-besitz | AppPorts versucht, Eigentumswechsel über Admin-Rechte durchzuführen; im Popup autorisieren |
-| Contents symbolischer Link-Ziel verloren | Kann nicht signiert werden; externe Daten müssen zuerst wiederhergestellt oder App zurückverschoben werden |
-
-Für detaillierte Mechanismen siehe [Neuzeichnung & Absturzprävention](/de/datamigrae/resign).
-
-## App Store-Apps können nicht auf externes Laufwerk migriert werden
-
-### macOS-Versionen unter 15.1
-
-macOS-Versionen vor 15.1 unterstützen die App Store-App-Installation auf externe Laufwerke nicht. Sie müssen:
-
-1. „App Store-App-Migration" in den AppPorts-Einstellungen aktivieren
-2. Nach der Migration erfordern App-Updates eine manuelle Re-Migration zum Überschreiben
-
-### macOS 15.1 und höher
-
-Falls der App Store Apps auf externen Laufwerken nicht aktualisieren kann:
-
-1. App Store-Einstellungen öffnen
-2. „Große Apps auf ein externes Laufwerk herunterladen und installieren" aktivieren
-3. Dasselbe externe Speichergerät wie die AppPorts-externe Speicherbibliothek auswählen
-
-## App kann nach der Migration nicht gestartet werden
-
-### Fehlerschritte
-
-1. **Externe Speicherverbindung prüfen**: Bestätigen, dass der externe Speicher verbunden und zugänglich ist
-2. **App-Status-Badges prüfen**:
-   - „Verwaister Link" → Externe App verloren; manuelle Entlinkung erforderlich
-   - „Beschädigt" → Neuzeichnung ausführen
-3. **Sperrstatus prüfen**: Falls die App gesperrt ist (uchg), kann der Selbst-Updater möglicherweise nicht ausgeführt werden
-4. **Protokolle prüfen**: Menüleiste → Protokolle → Im Finder anzeigen; nach relevanten Fehlermeldungen suchen
-5. **Zurück in den lokalen Speicher verschieben**: In der Externe-Apps-Bibliothek „Zurück in den lokalen Speicher verschieben" auswählen, um zu prüfen, ob es ein Problem mit dem externen Speicher ist
-
-## Zielpfad existiert bereits
-
-AppPorts ersetzt ein App-Ziel nur automatisch, wenn die App den Status „Ausstehendes Herausverschieben" hat oder das Ziel als alter AppPorts-Portal-Eintrag bzw. Rest erkannt wird. Datenverzeichnisse werden nur bei vollständig passenden AppPorts-Metadaten automatisch wiederhergestellt. Unabhängige echte Apps oder Verzeichnisse werden nicht überschrieben, sondern als Konflikt gemeldet.
-
-## Datenverzeichnis-Anzeigeprobleme
-
-### Symptome
-
-Die Datenverzeichnisliste zeigt unvollständigen oder falschen Status an.
-
-### Lösung
-
-1. AppPorts verwendet `FolderMonitor` zur Überwachung von Dateisystemänderungen; aktualisiert sich normalerweise automatisch
-2. Wird nicht automatisch aktualisiert, wechseln Sie zu einem anderen Reiter und zurück, um einen erneuten Scan auszulösen
-3. Besteht das Problem weiterhin, prüfen Sie die Scan-Fehlermeldungen in den Protokollen
+1. AppPorts überwacht Dateisystemänderungen und aktualisiert normalerweise automatisch.
+2. Beim schnellen App-Wechsel überschreiben alte Ergebnisse die aktuelle Auswahl nicht. Warte bei kurzzeitig leerer Liste das Ende des Scans ab.
+3. Falls nötig, verwende die Aktualisierungsschaltfläche oben.
+4. Bei anhaltenden Problemen prüfe Scanfehler im Protokoll.

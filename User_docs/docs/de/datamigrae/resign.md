@@ -2,145 +2,95 @@
 outline: deep
 ---
 
-# Neuzeichnung & Absturzprävention
+# Neusignierung und Schutz vor Abstürzen
 
 ![](https://pic.cdn.shimoko.com/appports/%E6%88%AA%E5%B1%8F2026-05-08%2008.38.37.png)
 
-## Warum Apps nach der Datenmigration abstürzen können
+::: warning Neusignierung ist keine allgemeine Reparatur
+Ad-hoc-Neusignierung ersetzt die Entwicklersignatur und entfernt Rechte für Sandbox, App-Gruppen und Schlüsselbund. Sandbox-Apps wie WeChat oder App Store-Apps können dadurch unter macOS 27 nicht mehr öffnen oder ihre Anmeldesitzung verlieren. Die neue Version speichert zuerst die vollständige Original-App, damit Signatur und ursprüngliche Rechte später wiederhergestellt werden können. Bereits verlorene Anmeldesitzungen kehren mit der Signatur nicht garantiert zurück.
 
-Der Code-Signing-Mechanismus von macOS (`codesign`) überprüft die Integrität des Anwendungspakets, einschließlich der Dateipfadstruktur. Wenn AppPorts das Datenverzeichnis einer App in den externen Speicher migriert und durch einen symbolischen Link ersetzt, wird die Signatur aufgebrochen, was folgende Probleme verursacht:
+Seit 1.8.2 lehnt AppPorts die Neusignierung von Sandbox-Apps standardmäßig ab. Sie ist nur im klassischen Modus nach Risikobestätigung erlaubt. Containerdaten verwenden [Mount-Migration](/de/datamigrae/mount-migration) ohne Signaturänderung. Hintergründe: [Containerdaten, Sandbox und Signaturidentität](/de/datamigrae/container-identity).
+:::
 
-- **Gatekeeper-Blockierung**: `codesign --verify --deep --strict` erkennt Signaturfehler; das System zeigt einen „Beschädigt"- oder „Von nicht identifiziertem Entwickler"-Dialog an und blockiert den App-Start
-- **Keychain-Zugriffsstörung**: Apps, die auf Keychain-Zugriffsgruppen angewiesen sind, können gespeicherte Anmeldedaten aufgrund von Signaturidentitätsänderungen nicht lesen
-- **Entitlements-Fehler**: Einige App-Entitlements sind an die Signaturidentität gebunden; nach Signaturänderungen stimmen die Entitlements nicht überein
+## Welches Problem löst Neusignierung?
 
-### Hochrisiko-App-Typen
+macOS prüft die Integrität von App-Paketen anhand ihrer Codesignatur. Nach dem Auslagern der App mit einer lokalen Startapp kann das System die App unter bestimmten Umständen für verändert halten und mit „beschädigt“ oder „nicht verifizierter Entwickler“ den Start verweigern. Eine Ad-hoc-Neusignierung der **tatsächlichen App auf dem externen Laufwerk** kann dann die Prüfung ermöglichen.
 
-| App-Typ | Risikostufe | Grund |
-|---------|-------------|-------|
-| Sparkle-Selbstupdate-Apps | **Hoch** | Updater kann App löschen oder ersetzen und symbolische Links beschädigen |
-| Electron-Selbstupdate-Apps | **Hoch** | `electron-updater` kann ebenfalls externe Speicher-Apps stören |
-| Keychain-abhängige Apps | **Hoch** | Ad-hoc-Signierung ändert die Signaturidentität; Keychain-Zugriffsgruppen schlagen fehl |
-| Mac App Store-Apps | **Hoch** | SIP-Schutz; kann nicht neu signiert werden |
-| Native Selbstupdate-Apps (Chrome, Edge) | Mittel | Selbstupdate kann externe Kopie ersetzen und lokalen Eintrag ungültig machen |
-| iOS-Apps (Mac-Version) | Niedrig | Verwendet Stub Portal oder Whole Symlink; weniger Signaturprobleme |
+Das ist der einzige Zweck. Mit der Migration von Datenordnern hat es nichts zu tun. Dass frühere Versionen beides bei Containerdaten verknüpften, verursachte die Probleme unter macOS 27.
 
-### Hochrisiko-Datenverzeichnistypen
+## Wann du es nicht verwenden solltest
 
-| Daten-Typ | Risikostufe | Grund |
-|-----------|-------------|-------|
-| `~/Library/Application Support/` | Mittel | App kann Dateisperrungen, SQLite WAL-Logs oder erweiterte Attribute verwenden; kann sich über symbolische Links abnormal verhalten |
-| `~/Library/Group Containers/` | Mittel | Von mehreren Apps unter demselben Team gemeinsam genutzt; symbolische Links können andere Apps stören |
-| `~/Library/Preferences/` | Niedrig-Mittel | `cfprefsd` cached plist-Dateien; symbolische Links können veraltete Daten verursachen |
-| `~/Library/Caches/` | Niedrig | Caches sind wiederherstellbar; die meisten Apps gehen mit fehlenden Caches um |
+| Situation | Erklärung |
+|------|------|
+| Sandbox-App | Standardmäßig abgelehnt; nach Risikobestätigung im klassischen Modus erlaubt. Mount-Migration ist vorzuziehen |
+| App Store-App | Durch SIP geschützt; nicht signierbar |
+| App mit Anmeldedaten im Schlüsselbund | Anmeldesitzung geht durch Neusignierung verloren |
+| App mit Widgets oder Teilen-Erweiterungen | App-Gruppenrechte gehen verloren; Erweiterungen können gemeinsame Daten nicht lesen |
+| App öffnet sich normal | Ohne Problem nicht neu signieren |
 
-## Neuzeichnungsmechanismus
+Erwäge es nur, wenn nach der externen Migration tatsächlich „beschädigt“ erscheint. Versuche zuerst eine Neuinstallation oder einen erneuten Download von der offiziellen Website.
 
-### Ad-hoc-Signierung
+## Zugänge und Schalter
 
-AppPorts verwendet **Ad-hoc-Signierung** (zertifikatslose lokale Signierung), um App-Signaturen nach der Migration zu reparieren. Ausführungsbefehl:
+| Aktion | Ort | Standard | Verhalten |
+|------|------|------|------|
+| Diese App neu signieren | Kontextmenü der App-Liste | Manuell | Vollständige Sicherung, dann Signieren einer Arbeitskopie. Sandbox-Apps werden standardmäßig abgelehnt; klassischer Modus benötigt Bestätigung |
+| Nach Migration neu signieren | Symbolleiste der Datenverzeichnisse, nur im klassischen Modus sichtbar | Aus | Zugehörige App nach Migration über symbolische Links neu signieren |
+| Automatische Neuzeichnung bei Anmeldung | Einstellungen | Bei Neuinstallation aus | Nur alte Datensätze bearbeiten; neue mit vollständigem Snapshot überspringen, damit die Signaturtransaktion nicht umgangen wird |
+| Originalsignatur wiederherstellen | App-Kontextmenü, Datenseiten-Symbolleiste, Reparaturfenster | Manuell | Original-App aus vollständiger Sicherung zurückholen. Alte Datensätze benötigen eine offizielle Original-App derselben Version. Kein privater Entwicklerschlüssel nötig |
 
-```bash
-codesign --force --deep --sign - <App-Pfad>
-```
+Für die Sandbox-Prüfung werden die Rechte der **tatsächlichen App** gelesen, nicht die der lokalen Startapp. Bei `com.apple.security.app-sandbox` mit true wird abgelehnt. Im [klassischen Datenmigrationsmodus](/de/settings#classic-data-migration-mode) ist es mit einer zusätzlichen Bestätigung bei jedem Vorgang erlaubt.
 
-Wobei `-` die Ad-hoc-Signierung angibt (ohne Entwicklerzertifikat).
-
-### Signierungsablauf
+## Signaturablauf
 
 ```mermaid
 flowchart TD
-    A[Neuzeichnung starten] --> B[Ursprüngliche Signaturidentität sichern]
-    B --> C{Ist die App gesperrt?}
-    C -->|Ja| D[uchg-Flag vorübergehend entsperren]
-    C -->|Nein| E{Ist die App beschreibbar?}
-    D --> E
-    E =>|Nicht beschreibbar & Root-besitz| F[Eigentumswechsel mit Admin versuchen]
-    E =>|Beschreibbar| G[Erweiterte Attribute bereinigen]
-    F --> G
-    F -->|Fehlgeschlagen & MAS-App| H[Signierung überspringen - SIP-Schutz]
-    G --> I[Bundle-Stammverzeichnis aufräumen]
-    I --> J{Ist Contents ein symbolischer Link?}
-    J =>|Ja| K[Vorübergehend durch echte Verzeichniskopie ersetzen]
-    J =>|Nein| L[Deep Signing ausführen]
-    K --> L
-    L =>|Fehlgeschlagen| M[Fallback auf Shallow Signing]
-    L =>|Erfolgreich| N{War Contents vorübergehend ersetzt?}
-    M --> N
-    N =>|Ja| O[Symbolischen Link wiederherstellen]
-    N =>|Nein| P[uchg-Flag wieder sperren]
-    O --> P
-    P => Q[Signierung abgeschlossen]
+    A[Tatsächliche App und Berechtigung im klassischen Modus prüfen] --> B[Vollständige Original-App sichern und Inhalt prüfen]
+    B --> C[Arbeitskopie auf demselben Volume erstellen]
+    C --> D[Kopie neu signieren und prüfen]
+    D --> E[Prüfsummen von Original und Neusignierung speichern]
+    E --> F[Unveränderte aktuelle App bestätigen]
+    F --> G[Arbeitskopie und aktuelle App atomar tauschen]
+    D -->|Fehler| H[Aktuelle App und Sicherung behalten]
+    F -->|Inhalt geändert| H
+    G -->|Speicher unterstützt keinen sicheren Austausch| H
 ```
 
-### Hauptschritte
+Eine lokale Startapp wird zuerst zur tatsächlichen App aufgelöst. Signierung und Wiederherstellung wirken auf die echte `.app`, ohne die Startapp zu überschreiben. Scheitert das Signieren oder Prüfen der Arbeitskopie, bleibt die aktuelle App unverändert. Auch ihre bisherigen Sperrflags bleiben erhalten.
 
-1. **Ursprüngliche Signaturidentität sichern**: Vor der Signierung wird die aktuelle Signaturidentität der App gelesen (Parsing von `Authority=`-Zeilen über `codesign -dvv`), gespeichert in `~/Library/Application Support/AppPorts/signature-backups/<BundleID>.plist`
+## Signatur sichern und wiederherstellen
 
-2. **Erweiterte Attribute bereinigen**: `xattr -cr` ausführen, um Resource Forks, Finder-Infos usw. zu entfernen und „detritus not allowed"-Fehler bei der Signierung zu vermeiden
+**Eine vollständige Sicherung kann die Signatur eines Drittentwicklers ohne dessen privaten Schlüssel wiederherstellen.** Die ursprüngliche Signatur ist bereits in den App-Dateien enthalten. Wiederherstellung bedeutet, diese Dateien zurückzuholen, nicht erneut mit der Entwickleridentität zu signieren. Hauptprogramm, verschachtelte Hilfsprogramme, Frameworks, Signaturressourcen und ursprüngliche Rechte werden mitgesichert. Ursprünglich Ad-hoc-signierte oder unsignierte Apps werden ebenfalls in ihren jeweiligen Originalzustand zurückversetzt.
 
-3. **Bundle-Stammverzeichnis bereinigen**: `.DS_Store`, `__MACOSX`, `.git`, `.svn` und andere Reste entfernen
+Unter `~/Library/Application Support/AppPorts/signature-backups/` liegen die `.plist`-Datensätze pro App-Kennung und die Originalkopien `original-…app`. Das Datensatzformat Version 2 speichert Prüfsummen des ursprünglichen und des neu signierten Inhalts. Wo das Dateisystem es erlaubt, wird Copy-on-Write verwendet; sonst ist eine vollständige Kopie nötig. Halte daher Platz für Sicherung und Arbeitskopie frei. Bei Platzmangel oder Kopierfehlern wird das Signieren abgebrochen.
 
-4. **Symbolischen Link Contents behandeln**: Falls `Contents/` ein symbolischer Link ist (Deep Contents Wrapper-Strategie), vorübergehend durch eine echte Verzeichniskopie ersetzen, dann nach der Signierung den symbolischen Link wiederherstellen
+Wiederherstellung:
 
-5. **Deep Signing → Shallow Signing Fallback**: Bevorzugt `--deep`-Signierung (alle verschachtelten Komponenten abdeckend); schlägt es aufgrund von Berechtigungs- oder Resource Fork-Problemen fehl, wird auf Shallow Signing ohne `--deep` zurückgegriffen
+1. App beenden.
+2. Falls Containerdaten im klassischen Modus migriert wurden, zuerst die entsprechenden Ordner unter „App Data“ wiederherstellen. Nach Rückkehr der Sandbox-Identität kann die App keine externen Containerdaten über symbolische Links lesen. AppPorts prüft dies und verhindert das Überspringen.
+3. Im App-Kontextmenü, der Datenseiten-Symbolleiste oder dem Reparaturfenster „Originalsignatur wiederherstellen“ wählen.
+4. AppPorts prüft die Sicherung und mögliche Änderungen oder Updates der aktuellen App. Nach Prüfung der Originalsignatur in einer Arbeitskopie wird die aktuelle App sicher ersetzt. Danach wird die Sicherung bereinigt.
 
-6. **Wiederholungsmechanismus**: Wenn `codesign` einen „internal error" erzeugt oder durch SIGKILL beendet wird, bis zu 2-mal wiederholen
+**Bei App-Updates, Inhaltsänderungen oder beschädigten Sicherungen stoppt die Wiederherstellung und bewahrt App und Sicherung.** Eine alte App überschreibt keine neue, und neue Signierergebnisse werden nicht mit alten Sicherungen vermischt. Unterstützt der Speicher keinen atomaren Austausch, hole die App vor Signaturoperationen lokal zurück. Normales Scannen entfernt Wiederherstellungsmaterial nicht automatisch.
 
-## Signatur-Sicherung & Wiederherstellung
+Nach einem offiziellen Update oder einer Neuinstallation wird beim nächsten Signieren eine neue vollständige Sicherung angelegt, sofern die App die strenge Signaturprüfung besteht und die Entwickleridentität zum Datensatz passt. Der alte Datensatz wird unter `signature-backups/retired/` archiviert; auch seine ursprüngliche App-Kopie bleibt erhalten und wird nicht für die neue Version verwendet. Archive belegen weiterhin Speicher. Wenn die alte Version nicht mehr benötigt wird, findest du die zugehörige Kopie über `snapshotName` im archivierten Datensatz und kannst sie bereinigen.
 
-### Pfadauflösung für verknüpfte Apps
+### Was ist mit alten Sicherungen, die nur einen Identitätsnamen enthalten?
 
-Für verknüpfte Apps (Status: „Verknüpft") lösen Signierungsoperationen automatisch den **echten externen App-Pfad** auf, anstatt die lokale Stub-Portal-Shell oder den symbolischen Link zu verwenden. Auflösungsstrategie:
+Alte `.plist`-Dateien enthalten nur App-Kennung, Signaturidentitätsname, Pfad und Datum, aber kein Originalprogramm und keine Berechtigungsdaten. Daraus lässt sich keine Signatur wiederherstellen. Weder das frühere Entfernen der Signatur bei Ad-hoc-Datensätzen noch das Signieren anhand eines Identitätsnamens war eine echte Wiederherstellung.
 
-| Migrationsmethode | Auflösung |
-|-------------------|-----------|
-| Whole App Symlink | Löst das symbolische Link-Ziel zum echten externen `.app`-Pfad auf |
-| Stub Portal | Extrahiert den `REAL_APP='...'-Pfad aus dem `Contents/MacOS/launcher`-Skript |
+Die neue Version bewahrt diese Datensätze und bietet „Original-App auswählen…“. Beschaffe eine offizielle Original-`.app` **derselben App und Version**. AppPorts prüft Bundle ID, Version und Signatur sowie die Entwickleridentität, falls sie im alten Datensatz enthalten ist. Danach wird das Original am aktuellen tatsächlichen App-Pfad wiederhergestellt. Die lokale Startapp bleibt gültig, und das ausgewählte Original wird nicht verändert.
 
-Das bedeutet, dass Sicherungs-, Wiederherstellungs- und Neuzeichnungsoperationen immer das tatsächliche Anwendungspaket betreffen und Signaturänderungen wirksam werden.
+Findest du keine Original-App derselben Version, folge der [Reparatur](/de/macos-27#reparatur): Daten wiederherstellen, App lokal zurückholen und aus offizieller Quelle neu installieren. Der alte Datensatz allein kann keine verlorene Signatur neu erzeugen.
 
-### Sicherung
+## Weitere Risiken nach App-Typ
 
-Sicherungsdateien werden im Verzeichnis `~/Library/Application Support/AppPorts/signature-backups/` gespeichert, benannt nach der **realen App** `BundleID.plist`:
+Diese stehen nicht direkt mit der Neusignierung in Verbindung, werden aber oft zusammen gefragt:
 
-| Feld | Beschreibung |
-|------|--------------|
-| `bundleIdentifier` | Bundle ID der App |
-| `signingIdentity` | Ursprüngliche Signaturidentität (z. B. `Developer ID Application: ...` oder `ad-hoc`) |
-| `originalPath` | Ursprünglicher App-Pfad |
-| `backupDate` | Sicherungszeitstempel |
+| App-Typ | Risiko | Erklärung |
+|----------|------|------|
+| Sparkle / Electron mit Selbstaktualisierung | Hoch | Updater können die externe App löschen oder ersetzen. Verwende „Gesperrte Migration“ |
+| Chrome / Edge | Mittel | Updates landen lokal. „Ausstehende Auslagerung“ weist auf eine erneute Migration hin |
+| App Store-Apps | Hoch | Nicht signierbar; ab macOS 15.1 wird die native externe Installation des App Store empfohlen |
 
-Sicherungen werden zu folgenden Zeitpunkten ausgelöst:
-
-- Vor der Datenverzeichnismigration (falls automatische Neuzeichnung aktiviert ist) — verwendet den realen App-Pfad für die Sicherung
-- Vor jeder Signierungsoperation (idempotent; überschreibt keine vorhandenen Sicherungen)
-- Manuelle „Signatur sichern"-Aktion
-
-### Wiederherstellung
-
-Bei der Signaturwiederherstellung führt AppPorts unterschiedliche Strategien basierend auf der gesicherten Signaturidentität aus:
-
-| Gesicherte Signaturidentität | Wiederherstellungsverhalten |
-|-----------------------------|----------------------------|
-| `ad-hoc` oder leer | `codesign --remove-signature` ausführen, um Signatur zu entfernen; Sicherung löschen |
-| Gültige Entwicklerzertifikat-Identität | Prüfen, ob Zertifikat in Keychain vorhanden ist. Falls vorhanden, mit ursprünglicher Identität neu signieren |
-| Gültige Entwicklerzertifikat-Identität, aber Zertifikat nicht auf diesem Rechner | **Fallback auf Ad-hoc-Signierung**; ursprüngliche Signatur kann nicht vollständig wiederhergestellt werden |
-
-### Wiederherstellungsfehler-Szenarien
-
-Die folgenden Szenarien führen zu einem Signaturwiederherstellungsfehler oder einer unvollständigen Wiederherstellung:
-
-| Szenario | Ergebnis |
-|----------|----------|
-| Sicherungs-plist-Datei existiert nicht | Wirft `noBackupFound`-Fehler; Wiederherstellung nicht möglich |
-| Ursprüngliches Entwicklerzertifikat nicht in lokaler Keychain | Fallback auf Ad-hoc-Signierung. App kann starten, aber Keychain-Zugriffsgruppen und einige Entitlements können fehlschlagen |
-| Mac App Store-Apps (SIP-Schutz) | Wird stillschweigend übersprungen. SIP verhindert jegliche Änderung an System-App-Signaturen |
-| App-Verzeichnis nicht beschreibbar & Root-besitz | Versuch, Eigentumswechsel über Admin-Rechte durchzuführen. Schlägt fehl, wenn der Benutzer die Autorisierungsanfrage abbricht |
-| Contents symbolischer Link-Ziel verloren | `copyItem` schlägt im temporären Ersetzungsschritt fehl; Signierung kann nicht ausgeführt werden |
-| Benutzer bricht Admin-Autorisierung ab | Wirft `codesignFailed("User cancelled authorization")` |
-| Deep und Shallow Signing beide fehlgeschlagen | Fehler wird nach oben weitergeleitet; Signierungsoperation schlägt fehl |
-
-::: warning ⚠️ Über verlorene Entwicklerzertifikate
-Das häufigste reale Wiederherstellungsfehler-Szenario ist: Die ursprüngliche App wurde von einem Drittanbieter signiert (z. B. `Developer ID Application: Google LLC`), aber die Keychain des aktuellen Rechners hat nicht den entsprechenden privaten Schlüssel. In diesem Fall kann die Wiederherstellungsoperation nur eine Ad-hoc-Signatur erzeugen; **die ursprüngliche Signaturidentität kann nicht vollständig wiederhergestellt werden**. Für Apps, die auf bestimmte Signaturidentitäten für Keychain-Zugriffsgruppen oder Unternehmenskonfigurationsprofile angewiesen sind, kann dies zu Funktionsanomalien führen.
-:::
+Siehe [Selbstaktualisierende Apps erkennen](/de/migration-strategy/updater-detection) und [App-Typen und Strategien](/de/migration-strategy/strategy-map).
